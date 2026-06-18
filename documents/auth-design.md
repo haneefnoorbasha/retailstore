@@ -1,7 +1,35 @@
 # Authentication & Authorization — Technical Design
 
-> **Read `auth-analysis.md` first.** This document translates the decisions into concrete
-> technical design: exact code patterns, configurations, token shapes, and sequences.
+> This document covers the full authentication and authorization architecture for the
+> RetailStore platform: design decisions, code patterns, token shapes, flows, and
+> per-environment implementation differences.
+
+---
+
+## Environment Quick Reference
+
+DEV is genuinely different from STAGE/PROD. STAGE and PROD are auth-identical — they share
+the same Spring config pattern, the same Keycloak deployment approach, and the same K8s Secrets
+pattern. PROD only tightens non-auth settings on top.
+
+| | LOCAL (default) | DEV (k3s on EC2) | STAGE (EKS) | PROD (EKS) |
+|---|---|---|---|---|
+| **Keycloak** | Standalone Docker | Bitnami k3s pod | Bitnami EKS pod | Bitnami EKS HA (2 pods) |
+| **Keycloak DB** | H2 embedded | MySQL `keycloakdb` on k3s | RDS MySQL (shared) | RDS MySQL (dedicated) |
+| **JWKS URI pattern** | `${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}/…` | Same `${VAR:localhost}` defaults | `${KEYCLOAK_JWKS_URI}` (no default) | Same as stage |
+| **Token URI (M2S)** | Same HOST/PORT pattern | Same HOST/PORT pattern | `${KEYCLOAK_TOKEN_URI}` (no default) | Same as stage |
+| **Client secrets** | Defaults in `application.yml` | Helm dev values + `optional: true` k8s Secret | K8s Secret (required) | AWS Secrets Manager |
+| **Realm import** | Docker volume mount | k8s ConfigMap → pod mount | Manual or Terraform | Same as stage |
+| **MySQL SSL** | No | No | Yes (`useSSL=true&requireSSL=true`) | Yes |
+| **Swagger** | Enabled | Enabled | Enabled (internal only) | **Disabled** |
+| **Health show-details** | `always` | `always` | `when-authorized` | `never` |
+| **Tracing sampling** | None | 100% → Zipkin | 10% → tracing backend | 5% → tracing backend |
+| **Issuer validation** | Disabled | Disabled | Disabled | Disabled |
+
+> **Why issuer validation is disabled in all envs:** Keycloak inside k3s issues tokens
+> with `iss = http://keycloak:8180/realms/retailstore` (cluster DNS). IntelliJ connecting
+> via port-forward expects `http://localhost:8180`. Using only `jwk-set-uri` (not
+> `issuer-uri`) avoids this mismatch while still validating RS256 signature and expiry.
 
 ---
 
