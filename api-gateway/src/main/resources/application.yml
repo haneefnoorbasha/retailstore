@@ -9,8 +9,11 @@ spring:
     oauth2:
       resourceserver:
         jwt:
+          # issuer-uri is intentionally absent — SecurityConfig builds NimbusReactiveJwtDecoder
+          # from jwk-set-uri only, so Spring never validates the iss claim. This avoids a
+          # mismatch between the k3s-internal issuer (http://keycloak:8180/...) and the
+          # localhost URL used by IntelliJ via port-forward. Signature + expiry are still validated.
           jwk-set-uri: ${KEYCLOAK_JWKS_URI:http://localhost:8180/realms/retailstore/protocol/openid-connect/certs}
-          issuer-uri:  ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/retailstore}
   cloud:
     gateway:
       # Global CORS — web-storefront needs this

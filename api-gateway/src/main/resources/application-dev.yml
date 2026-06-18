@@ -1,10 +1,11 @@
-# Dev profile — infra runs in Docker Compose.
-# IntelliJ: set SPRING_PROFILES_ACTIVE=dev; all ${VAR:localhost} defaults connect via Docker port mappings.
-# Docker Compose: injects KEYCLOAK_HOST=keycloak, REDIS_HOST=redis, ZIPKIN_HOST=zipkin, etc.
+# Dev profile — infra runs on k3s (EC2). Start with: ./retailstore-platform/scripts/start-dev.sh
+# IntelliJ: set SPRING_PROFILES_ACTIVE=dev; run port-forward.sh first; ${VAR:localhost} defaults
+#   resolve to the forwarded k3s ports (Keycloak→8180, Redis→6379, etc.)
+# k3s pods: helm/dev/gateway.yaml injects KEYCLOAK_HOST=keycloak, REDIS_HOST=redis-master, etc.
 #
-# Gateway route URIs (RETAIL_GATEWAY_ROUTES_*) must be set explicitly:
-#   IntelliJ run config  : RETAIL_GATEWAY_ROUTES_CATALOG=http://localhost:8081, etc.
-#   Docker Compose       : already injects http://catalog:8080, etc.
+# Gateway route URIs (RETAIL_GATEWAY_ROUTES_*):
+#   IntelliJ: set RETAIL_GATEWAY_ROUTES_CATALOG=http://localhost:8081, etc. (other services in k3s)
+#   k3s pods: helm/dev/gateway.yaml already injects http://catalog:8080, etc.
 
 spring:
   security:

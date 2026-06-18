@@ -6,6 +6,8 @@
 
 | Concern | Implementation |
 |---------|---------------|
+| **JWT Authentication** | `GlobalJwtFilter` (order -3) — validates RS256 JWT via Keycloak JWKS; rejects with 401 if missing or invalid |
+| **Identity propagation** | `GlobalJwtFilter` — extracts claims and injects `X-User-Id`, `X-User-Email`, `X-User-Name`, `X-User-Role` headers for downstream services |
 | Routing | `application.yml` route predicates — path-based forwarding |
 | CORS | Global CORS config — allows web-storefront origin |
 | Rate limiting | Redis-backed `RequestRateLimiter` filter per route |
@@ -13,6 +15,8 @@
 | Request tracing | `CorrelationIdFilter` — attaches `X-Correlation-Id` to all requests |
 | Logging | `RequestLoggingFilter` — method, path, status, duration per request |
 | Security headers | `X-Content-Type-Options`, `X-Frame-Options` on all responses |
+
+Authentication is the gateway's most critical responsibility. See [`documents/authentication.md`](documents/authentication.md) for the full design, environment-wise configuration, and troubleshooting guide.
 
 ## Route table
 
