@@ -42,7 +42,7 @@
 You are building a **learning project with production standards**. The right model for you is:
 
 ```
-local (default) → dev (docker-compose) → stage (AWS minimal) → prod (AWS full)
+local (default) → dev (k3s on EC2) → stage (AWS EKS minimal) → prod (AWS EKS full HA)
 ```
 
 This mirrors Google/Zalando: same configs, same code, same patterns — only the infra sizing
@@ -63,15 +63,15 @@ gets switched on in local without a documented reason.**
 │  │    LOCAL      │    │     DEV       │    │    STAGE      │    │     PROD      │  │
 │  │  (default)    │───►│  (dev)        │───►│  (stage)      │───►│   (prod)      │  │
 │  │               │    │               │    │               │    │               │  │
-│  │ Java process  │    │ Docker Compose│    │ AWS EKS       │    │ AWS EKS       │  │
-│  │ + infra-only  │    │ all services  │    │ minimal size  │    │ full HA size  │  │
-│  │ docker-compose│    │               │    │               │    │               │  │
+│  │ Java process  │    │ k3s on EC2    │    │ AWS EKS       │    │ AWS EKS       │  │
+│  │ + H2 in-mem   │    │ all services  │    │ minimal size  │    │ full HA size  │  │
+│  │ Keycloak-local│    │ ECR images    │    │               │    │               │  │
 │  └──────────────┘    └──────────────┘    └──────────────┘    └───────────────┘  │
-│       IDE/mvn           docker compose       EKS t3.medium       EKS m5.large    │
-│       H2/in-mem         PostgreSQL           RDS single-AZ       RDS multi-AZ    │
-│       Keycloak-docker   Keycloak-docker      Keycloak-EKS        Keycloak-EKS HA │
-│       No rate limit     Redis rate limit     Redis rate limit    Redis rate limit │
-│       No observability  Basic observability  Full observability  Full + alerting  │
+│       IDE/mvn           k3s (t3.xlarge)     EKS t3.large        EKS m5.large    │
+│       H2/in-mem         MySQL 8 (Bitnami)   RDS MySQL single-AZ RDS MySQL HA    │
+│       Keycloak-local    Keycloak-k3s        Keycloak-EKS        Keycloak-EKS HA │
+│       No rate limit     Redis rate limit    Redis rate limit    Redis rate limit  │
+│       No observability  Zipkin tracing      Full observability  Full + alerting  │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -95,27 +95,27 @@ Legend: ✅ Full | ⚡ Simplified | 🔇 Disabled | ❌ Not applicable
 
 | Concern | LOCAL | DEV | STAGE | PROD |
 |---|:---:|:---:|:---:|:---:|
-| Authentication (Keycloak) | ⚡ Docker | ⚡ Docker | ✅ EKS | ✅ EKS HA |
+| Authentication (Keycloak) | ⚡ local Docker | ⚡ k3s Bitnami | ✅ EKS Bitnami | ✅ EKS HA |
 | Authorization (JWT scopes) | ✅ | ✅ | ✅ | ✅ |
 | API Gateway | ✅ | ✅ | ✅ ALB+GW | ✅ ALB+GW |
 | Load Balancing (L7) | ❌ | ❌ | ✅ ALB | ✅ ALB |
-| Rate Limiting | 🔇 off | ✅ Redis | ✅ Redis | ✅ Redis |
+| Rate Limiting | 🔇 off | ✅ Redis (k3s) | ✅ ElastiCache | ✅ ElastiCache |
 | Circuit Breaker | ✅ loose | ✅ normal | ✅ tight | ✅ tight |
 | Retry with Backoff | ✅ 2 attempts | ✅ 3 attempts | ✅ 3 attempts | ✅ 3 attempts |
 | Timeout (per call) | ✅ 5s | ✅ 5s | ✅ 3s | ✅ 3s |
 | Bulkhead | 🔇 | ⚡ thread pool | ✅ thread pool | ✅ thread pool |
 | Caching L1 (in-process) | ✅ Spring Cache | ✅ Spring Cache | ✅ Spring Cache | ✅ Spring Cache |
-| Caching L2 (Redis) | 🔇 | ✅ Docker Redis | ✅ ElastiCache | ✅ ElastiCache |
-| Service Discovery | ⚡ hardcoded | ⚡ Docker DNS | ✅ K8s DNS | ✅ K8s DNS |
-| Config Management | application.yml | application.yml | ConfigMap | Secrets Manager |
-| Secret Management | .env / env vars | Docker env | K8s Secrets | AWS Secrets Mgr |
-| Database | H2 / in-memory | Docker Postgres | RDS single-AZ | RDS multi-AZ |
+| Caching L2 (Redis) | 🔇 | ✅ Redis (k3s) | ✅ ElastiCache | ✅ ElastiCache |
+| Service Discovery | ⚡ hardcoded | ⚡ k3s ClusterIP DNS | ✅ K8s DNS | ✅ K8s DNS |
+| Config Management | application.yml | k8s ConfigMap (Helm) | ConfigMap | Secrets Manager |
+| Secret Management | .env / env vars | k8s env vars (Helm) | K8s Secrets | AWS Secrets Mgr |
+| Database | H2 / in-memory | MySQL 8 (k3s Bitnami) | RDS MySQL single-AZ | RDS MySQL HA |
 | DB Migration (Flyway) | ✅ | ✅ | ✅ | ✅ |
-| Message Queue (SQS) | 🔇 disabled | ⚡ LocalStack | ✅ AWS SQS | ✅ AWS SQS |
-| Structured Logging | ⚡ console | ✅ console + file | ✅ CloudWatch | ✅ CloudWatch |
-| Distributed Tracing | 🔇 | ⚡ Zipkin Docker | ✅ AWS X-Ray | ✅ AWS X-Ray |
-| Metrics (Prometheus) | ✅ /actuator | ✅ Grafana Docker | ✅ CloudWatch | ✅ CloudWatch + Grafana |
-| Health Checks (probes) | ✅ Actuator | ✅ Actuator | ✅ K8s probes | ✅ K8s probes |
+| Message Queue (SQS) | 🔇 disabled | ⚡ LocalStack (k3s) | ✅ AWS SQS | ✅ AWS SQS |
+| Structured Logging | ⚡ console | ✅ console (k3s stdout) | ✅ CloudWatch | ✅ CloudWatch |
+| Distributed Tracing | 🔇 | ⚡ Zipkin (k3s) | ✅ AWS X-Ray | ✅ AWS X-Ray |
+| Metrics (Prometheus) | ✅ /actuator | ✅ Actuator (k3s) | ✅ CloudWatch | ✅ CloudWatch + Grafana |
+| Health Checks (probes) | ✅ Actuator | ✅ K8s probes (k3s) | ✅ K8s probes | ✅ K8s probes |
 | Graceful Shutdown | ✅ | ✅ | ✅ | ✅ |
 | CORS | ✅ | ✅ | ✅ | ✅ |
 | TLS / HTTPS | 🔇 HTTP | 🔇 HTTP | ✅ ACM cert | ✅ ACM cert |
@@ -172,34 +172,49 @@ Developer Machine
     orders   → H2 in-memory
 ```
 
-### 4.2 DEV (docker-compose)
+### 4.2 DEV (k3s on EC2)
 
 ```
-Docker Compose Network: retailstore
-────────────────────────────────────────────────────────────────────────
-  Browser (host:3000) or REST client
-       │
-       │ HTTP (no TLS, port forwarded)
-       ▼
-  gateway:8080
-  └── GlobalJwtFilter (JWKS from keycloak:8180)
-  └── Rate Limiting → redis:6379 (RequestRateLimiter)
-  └── Circuit Breaker → Resilience4j in-process
-  └── Routes →
-       ├── experience:8080
-       │    └── CatalogClient + Bearer service token
-       │    └── CartClient + Bearer service token
-       ├── catalog:8080   ← Spring Security OAuth2 resource server
-       ├── carts:8080     ← Spring Security OAuth2 resource server
-       ├── checkout:8080  ← Spring Security OAuth2 resource server
-       └── orders:8080    ← Spring Security OAuth2 resource server
-
-  Infrastructure:
-    keycloak:8180        ← realm auto-imported from JSON
-    redis:6379           ← rate limiting + checkout sessions
-    dynamodb-local:8000  ← cart
-    postgres-orders:5432 ← orders
+Your Laptop                               EC2 t3.xlarge
+────────────────────────────────          ──────────────────────────────────────────────
+                                          k3s cluster  (Namespace: retailstore)
+  Browser / IntelliJ                      ┌────────────────────────────────────────────┐
+       │                                  │  gateway Pod (port 30080 NodePort)          │
+       │  kubectl port-forward            │  └── GlobalJwtFilter (JWKS→keycloak:8180)  │
+       │  or EC2 NodePort:30080           │  └── Rate Limiting → redis-master:6379      │
+       ▼                                  │  └── Routes →                               │
+  IntelliJ (SPRING_PROFILES_ACTIVE=dev)   │       ├── experience:8080                  │
+  └── connects via kubectl port-forward   │       │    └── Bearer service token         │
+      to infra on localhost:              │       ├── catalog:8080                      │
+        MySQL       → localhost:3306      │       ├── carts:8080                        │
+        Redis       → localhost:6379      │       ├── checkout:8080                     │
+        Keycloak    → localhost:8180      │       └── orders:8080                       │
+        DynamoDB    → localhost:8000      │                                             │
+        LocalStack  → localhost:4566      │  Infrastructure Pods:                       │
+        Zipkin      → localhost:9411      │    mysql (Bitnami 11.1.14)                 │
+                                          │    redis-master (Bitnami 20.1.7)           │
+  Scripts:                               │    keycloak (Bitnami 22.2.1, realm import) │
+    start-dev.sh   → start EC2 + deploy  │    dynamodb-local:8000                     │
+    stop-dev.sh    → undeploy + stop EC2 │    localstack:4566 (SQS)                   │
+    build-push.sh  → ECR image push      │    zipkin:9411                             │
+    port-forward.sh→ infra to localhost  │                                             │
+                                          │  Databases (MySQL on k3s):                 │
+  ECR (image registry):                  │    catalogdb  (catalog_user)               │
+    retailstore/catalog                  │    ordersdb   (orders_user)                │
+    retailstore/orders                   │    keycloakdb (keycloak_user)              │
+    retailstore/carts                    │                                             │
+    retailstore/checkout                 │  Tracing: Zipkin (100% sampling)           │
+    retailstore/experience               └────────────────────────────────────────────┘
+    retailstore/gateway
 ```
+
+**Key design decision:** Dev uses k3s on EC2 instead of local Docker Compose so that:
+- The dev environment uses the same container orchestrator as stage/prod (Kubernetes)
+- MySQL 8 in dev replicates RDS MySQL in stage/prod (not H2 or PostgreSQL)
+- Helm charts used in dev are the same charts deployed to stage/prod (only values differ)
+- EC2 can be stopped when not working to control cost (~$30/month at 8hr/day)
+- IntelliJ connects to k3s infra via `kubectl port-forward` using the `localhost:port` defaults
+  in `application-dev.yml` (`${MYSQL_HOST:localhost}`, `${REDIS_HOST:localhost}`, etc.)
 
 ### 4.3 STAGE (AWS EKS — minimal)
 
@@ -227,11 +242,11 @@ EKS Cluster (2x t3.large nodes, single AZ us-east-1a)
   ├── cart Pod (1 replica)
   ├── checkout Pod (1 replica)
   ├── orders Pod (1 replica)
-  └── keycloak Pod (1 replica, DB: RDS PostgreSQL)
+  └── keycloak Pod (1 replica, DB: RDS MySQL)
   
   AWS Managed Services:
     ElastiCache Redis (cache.t3.micro, single node)
-    RDS PostgreSQL (db.t3.medium, single-AZ)
+    RDS MySQL 8.0 (db.t3.medium, single-AZ)
     DynamoDB (on-demand billing)
     SQS (standard queue)
     ECR (image registry)
@@ -273,7 +288,7 @@ EKS Cluster (3 AZs, 3–9 nodes m5.large)
 
   AWS Managed Services:
     ElastiCache Redis Cluster (cache.r6g.large, 2 nodes, multi-AZ)
-    RDS Aurora PostgreSQL (db.r5.large, Multi-AZ, read replica)
+    RDS Aurora MySQL 8.0 (db.r5.large, Multi-AZ, read replica)
     DynamoDB (on-demand, point-in-time recovery enabled)
     SQS (standard queue + DLQ)
     ECR (image registry + vulnerability scanning enabled)
@@ -302,7 +317,7 @@ EKS Cluster (3 AZs, 3–9 nodes m5.large)
 
 | | LOCAL | DEV | STAGE | PROD |
 |---|---|---|---|---|
-| **IdP** | Keycloak (Docker, single container) | Keycloak (Docker) | Keycloak (EKS, 1 pod) | Keycloak (EKS, 2 pods + PDB) |
+| **IdP** | Keycloak (local Docker) | Keycloak 25 (k3s Bitnami) | Keycloak 25 (EKS Bitnami, 1 pod) | Keycloak 25 (EKS Bitnami, 2 pods + PDB) |
 | **Realm** | `retailstore` | `retailstore` | `retailstore` | `retailstore` |
 | **User login** | PKCE (Authorization Code) | PKCE | PKCE | PKCE |
 | **M2S auth** | Client Credentials | Client Credentials | Client Credentials | Client Credentials |
@@ -311,18 +326,24 @@ EKS Cluster (3 AZs, 3–9 nodes m5.large)
 | **Refresh rotation** | Yes | Yes | Yes | Yes |
 | **Token validation** | JWKS at gateway | JWKS at gateway | JWKS at gateway | JWKS at gateway |
 | **Downstream authz** | X-User-* headers | X-User-* headers | X-User-* headers | X-User-* headers |
-| **Client secrets** | Hardcoded (dev values) | Hardcoded | AWS Secrets Manager | AWS Secrets Manager |
+| **Client secrets** | Plaintext defaults in application.yml | k8s env vars in Helm dev values | K8s Secrets (optional: true) | AWS Secrets Manager |
 | **Brute force** | Enabled (10 failures) | Enabled | Enabled | Enabled (5 failures) |
 | **Token revocation** | Session invalidation | Session invalidation | Session invalidation | Session invalidation |
 | **LDAP federation** | No | No | No | Optional (enterprise add-on) |
 
 **Spring Boot config difference:**
 ```yaml
-# local / dev — application.yml (already done)
-spring.security.oauth2.resourceserver.jwt.jwk-set-uri: http://localhost:8180/...
+# local (default profile) — application.yml
+spring.security.oauth2.resourceserver.jwt.jwk-set-uri:
+  http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}/realms/retailstore/protocol/openid-connect/certs
 
-# stage / prod — injected via Secrets Manager → K8s Secret → env var
-# KEYCLOAK_JWKS_URI = https://auth.stage.retailstore.com/realms/retailstore/...
+# dev profile — application-dev.yml (same pattern; k3s injects KEYCLOAK_HOST=keycloak)
+spring.security.oauth2.resourceserver.jwt.jwk-set-uri:
+  http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}/realms/retailstore/protocol/openid-connect/certs
+
+# stage / prod — application-stage.yml / application-prod.yml
+# KEYCLOAK_JWKS_URI injected from Helm values → K8s ConfigMap
+spring.security.oauth2.resourceserver.jwt.jwk-set-uri: ${KEYCLOAK_JWKS_URI}
 ```
 
 **Do we need this in all environments?** Yes — skip it in any env and you lose the ability to
@@ -346,9 +367,9 @@ rate limiting, circuit breaking, CORS, and header enrichment.
 | **Tool** | Spring Cloud Gateway (reactive) | Spring Cloud Gateway | SCG + AWS ALB | SCG + AWS ALB |
 | **TLS termination** | None | None | ALB (ACM cert) | ALB (ACM cert) |
 | **JWT validation** | GlobalJwtFilter | GlobalJwtFilter | GlobalJwtFilter | GlobalJwtFilter |
-| **Routing** | application.yml routes | application.yml routes | application.yml + Helm | application.yml + Helm |
+| **Routing** | application.yml routes | application.yml + Helm dev values | application.yml + Helm stage values | application.yml + Helm prod values |
 | **Public paths** | /actuator/**, /fallback/** | Same | Same | Same + /api-docs disabled |
-| **Replicas** | 1 (mvn run) | 1 (Docker) | 1 (fixed) | 2 (HPA 2–5) |
+| **Replicas** | 1 (mvn run) | 1 (k3s pod) | 1 (fixed) | 2 (HPA 2–5) |
 | **Timeouts** | 5s connect, 10s response | 5s / 10s | 3s / 8s | 3s / 8s |
 
 **Do we need this in all environments?** Yes. The gateway is what makes this a realistic
@@ -369,15 +390,16 @@ microservices architecture. Running services directly without a gateway is a loc
 
 | | LOCAL | DEV | STAGE | PROD |
 |---|---|---|---|---|
-| **External LB** | None (direct port) | None (port mapping) | AWS ALB (1 AZ) | AWS ALB (3 AZs) |
-| **Internal LB** | None | Docker bridge DNS | K8s ClusterIP Service | K8s ClusterIP Service |
-| **Ingress Controller** | N/A | N/A | AWS Load Balancer Controller | AWS Load Balancer Controller |
-| **Health check** | None | Docker healthcheck | ALB target group health | ALB target group health |
+| **External LB** | None (direct port) | NodePort 30080 (gateway) | AWS ALB (1 AZ) | AWS ALB (3 AZs) |
+| **Internal LB** | None | k3s ClusterIP DNS | K8s ClusterIP Service | K8s ClusterIP Service |
+| **Ingress Controller** | N/A | k3s Traefik (unused) | AWS Load Balancer Controller | AWS Load Balancer Controller |
+| **Health check** | None | k3s readiness probe | ALB target group health | ALB target group health |
 | **Sticky sessions** | N/A | N/A | None (stateless services) | None (stateless services) |
 | **Connection draining** | N/A | N/A | 30s deregistration delay | 30s deregistration delay |
 
 **Do we need this in local/dev?** No — single instance, no distribution needed.
-Stage and prod both need it.
+Stage and prod both need it. Dev uses k3s ClusterIP for internal service-to-service DNS (same
+`fullnameOverride` names as stage/prod: `catalog`, `carts`, `orders`, etc.).
 
 ---
 
@@ -395,7 +417,7 @@ Prevents abuse, DDoS at the application layer, and runaway clients.
 | | LOCAL | DEV | STAGE | PROD |
 |---|---|---|---|---|
 | **Tool** | DISABLED | Spring Cloud Gateway RequestRateLimiter | Same | Same |
-| **Backend** | N/A | Redis (Docker) | ElastiCache | ElastiCache |
+| **Backend** | N/A | Redis (k3s Bitnami) | ElastiCache | ElastiCache |
 | **Key** | N/A | IP address | IP address + user sub | IP address + user sub |
 | **catalog replenish** | N/A | 200 req/s | 150 req/s | 200 req/s |
 | **catalog burst** | N/A | 400 | 300 | 400 |
@@ -544,7 +566,7 @@ Two levels: L1 = in-process JVM heap, L2 = Redis (shared across pods).
 | | LOCAL | DEV | STAGE | PROD |
 |---|---|---|---|---|
 | **L1 (in-process)** | Spring Cache (ConcurrentHashMap) | Spring Cache | Spring Cache | Spring Cache |
-| **L2 (distributed)** | Disabled | Redis Docker | ElastiCache (cache.t3.micro) | ElastiCache (cache.r6g.large, 2 nodes) |
+| **L2 (distributed)** | Disabled | Redis (k3s Bitnami) | ElastiCache (cache.t3.micro) | ElastiCache (cache.r6g.large, 2 nodes) |
 | **catalog products** | L1, 60s TTL | L1+L2, 60s TTL | L1+L2, 60s TTL | L1+L2, 60s TTL |
 | **catalog product by ID** | L1, 120s TTL | L1+L2, 120s TTL | L1+L2, 120s TTL | L1+L2, 120s TTL |
 | **checkout session** | Redis | Redis | Redis | Redis |
@@ -581,8 +603,8 @@ spring:
 
 | | LOCAL | DEV | STAGE | PROD |
 |---|---|---|---|---|
-| **Mechanism** | Hardcoded localhost URLs | Docker bridge DNS (container name) | Kubernetes ClusterIP + DNS | Kubernetes ClusterIP + DNS |
-| **Service URL** | http://localhost:8081 | http://catalog:8080 | http://catalog.retailstore-stage.svc | http://catalog.retailstore-prod.svc |
+| **Mechanism** | Hardcoded localhost URLs | k3s ClusterIP DNS (same names via fullnameOverride) | Kubernetes ClusterIP + DNS | Kubernetes ClusterIP + DNS |
+| **Service URL** | http://localhost:8081 | http://catalog:8080 | http://catalog.retailstore.svc | http://catalog.retailstore.svc |
 | **Dynamic registration** | None | None | K8s Service auto-registers | K8s Service auto-registers |
 | **Health-aware routing** | None | None | K8s readiness probe removes unhealthy pods | Same |
 | **Eureka** | NOT used | NOT used | NOT used | NOT used |
@@ -605,11 +627,11 @@ being baked into the Docker image.
 
 | | LOCAL | DEV | STAGE | PROD |
 |---|---|---|---|---|
-| **Non-secret config** | application.yml defaults | Docker env vars | K8s ConfigMap | K8s ConfigMap |
-| **Secret config** | application.yml defaults | Docker env vars | K8s Secrets (base64) | AWS Secrets Manager |
-| **Database URL** | application.yml | docker-compose env | ConfigMap | Secrets Manager |
-| **Keycloak URLs** | application.yml | docker-compose env | ConfigMap | ConfigMap |
-| **Client secrets** | application.yml | docker-compose env | K8s Secret | Secrets Manager + External Secrets Operator |
+| **Non-secret config** | application.yml defaults | k8s ConfigMap via Helm dev values | K8s ConfigMap | K8s ConfigMap |
+| **Secret config** | application.yml defaults | k8s env vars (Helm values, `optional: true`) | K8s Secrets (base64) | AWS Secrets Manager |
+| **Database URL** | application.yml | helm/dev/catalog.yaml, orders.yaml | ConfigMap | Secrets Manager |
+| **Keycloak URLs** | application.yml | helm/dev/*.yaml (KEYCLOAK_HOST, PORT) | ConfigMap | ConfigMap |
+| **Client secrets** | application.yml | k8s env vars in Helm dev values | K8s Secret (optional) | Secrets Manager + External Secrets Operator |
 | **Spring Config Server** | NOT used | NOT used | NOT used | NOT used |
 | **Hot reload** | Restart | Restart | Rolling restart | Rolling restart |
 
@@ -633,13 +655,13 @@ certificates — anything that must not appear in source code or logs.
 
 | | LOCAL | DEV | STAGE | PROD |
 |---|---|---|---|---|
-| **Tool** | `.env` file (gitignored) | docker-compose env (never committed with real values) | K8s Secrets + Sealed Secrets | AWS Secrets Manager + External Secrets Operator |
-| **Rotation** | Manual | Manual | Manual | Automated (30 days, Secrets Manager) |
+| **Tool** | application.yml defaults | k8s env vars via Helm dev values (dummy dev passwords) | K8s Secrets + Sealed Secrets | AWS Secrets Manager + External Secrets Operator |
+| **Rotation** | Manual | Manual | Manual (quarterly) | Automated (30 days, Secrets Manager) |
 | **Audit trail** | None | None | K8s audit log | CloudTrail + Secrets Manager access log |
 | **Encryption at rest** | None | None | etcd encryption | Secrets Manager (KMS) |
-| **Who can access** | Developer only | Local only | RBAC (ServiceAccount) | IAM role (IRSA — per pod) |
-| **DB password** | application.yml | docker-compose | Sealed Secret | Secrets Manager → External Secrets |
-| **Keycloak client secret** | application.yml | docker-compose | K8s Secret | Secrets Manager |
+| **Who can access** | Developer only | k3s cluster only | RBAC (ServiceAccount) | IAM role (IRSA — per pod) |
+| **DB password** | application.yml | helm/dev/catalog.yaml (catalog_pass — dev dummy) | Sealed Secret | Secrets Manager → External Secrets |
+| **Keycloak client secret** | application.yml | k8s Secret (optional: true in Helm chart) | K8s Secret | Secrets Manager |
 | **JWT signing key** | Keycloak manages | Keycloak manages | Keycloak manages | Keycloak manages (RS256 keypair) |
 
 **External Secrets Operator** (prod): K8s operator that syncs secrets from AWS Secrets Manager
@@ -659,13 +681,14 @@ another service's database. This is the most important microservices data princi
 
 | Service | LOCAL | DEV | STAGE | PROD |
 |---|---|---|---|---|
-| **catalog** | H2 in-memory (or in-memory store) | H2 or in-memory store | RDS PostgreSQL (db.t3.medium) | RDS Aurora PostgreSQL |
-| **cart** | DynamoDB Local | DynamoDB Local | DynamoDB on-demand | DynamoDB on-demand + PITR |
-| **checkout** | Redis (session) | Redis (session) | ElastiCache Redis | ElastiCache Redis Cluster |
-| **orders** | H2 in-memory | PostgreSQL Docker | RDS PostgreSQL (db.t3.medium) | RDS Aurora PostgreSQL Multi-AZ |
-| **keycloak** | H2 (embedded) | H2 (embedded) | RDS PostgreSQL shared | RDS PostgreSQL dedicated |
+| **catalog** | H2 in-memory | MySQL 8 `catalogdb` (k3s Bitnami) | RDS MySQL (db.t3.medium) | RDS Aurora MySQL Multi-AZ |
+| **cart** | DynamoDB Local | DynamoDB Local (k3s) | DynamoDB on-demand | DynamoDB on-demand + PITR |
+| **checkout** | Redis (session) | Redis (k3s Bitnami) | ElastiCache Redis | ElastiCache Redis Cluster |
+| **orders** | H2 in-memory | MySQL 8 `ordersdb` (k3s Bitnami) | RDS MySQL (db.t3.medium) | RDS Aurora MySQL Multi-AZ |
+| **keycloak** | H2 (embedded) | MySQL 8 `keycloakdb` (k3s shared) | RDS MySQL shared | RDS MySQL dedicated |
 
-**Flyway database migration** — all envs. See Concern 14.
+**Flyway database migration** — all envs. See Concern 14. Note: Flyway uses MySQL 8 dialect in dev/stage/prod
+(requires both `flyway-core` and `flyway-mysql` dependencies).
 
 ---
 
@@ -720,22 +743,21 @@ the consumer; provides durability (messages survive restarts).
 
 | | LOCAL | DEV | STAGE | PROD |
 |---|---|---|---|---|
-| **Tool** | Disabled | LocalStack SQS (Docker) | AWS SQS | AWS SQS |
-| **Order placed event** | Disabled | Published to local SQS | Published to SQS | Published to SQS |
-| **Dead letter queue** | N/A | Optional | Yes (3 retries before DLQ) | Yes (3 retries before DLQ) |
+| **Tool** | Disabled | LocalStack SQS (k3s pod) | AWS SQS | AWS SQS |
+| **Order placed event** | Disabled | Published to LocalStack SQS | Published to SQS | Published to SQS |
+| **Dead letter queue** | N/A | Yes (`order-events-dev-dlq`) | Yes (3 retries before DLQ) | Yes (3 retries before DLQ) |
 | **Visibility timeout** | N/A | 30s | 30s | 60s |
 | **Queue type** | N/A | Standard | Standard | Standard |
-| **Consumer** | N/A | OrderEventPublisher mock | OrderEventPublisher | OrderEventPublisher |
+| **Consumer** | N/A | OrderEventPublisher (SQS_ENDPOINT=http://localstack:4566) | OrderEventPublisher | OrderEventPublisher |
 | **Monitoring** | N/A | N/A | CloudWatch metrics | CW + alarm on DLQ depth > 0 |
 | **Kafka (future)** | N/A | N/A | N/A | Migrate when event volume justifies |
 
-**Dev: Add LocalStack to docker-compose:**
-```yaml
-localstack:
-  image: localstack/localstack:3.5
-  environment:
-    SERVICES: sqs
-  ports: ["4566:4566"]
+**Dev: LocalStack runs as a k3s Deployment with a k8s Job that creates queues at startup:**
+```
+k8s/dev/localstack.yaml  → Deployment + Service (port 4566) + init Job
+  Job creates: order-events-dev, order-events-dev-dlq
+SqsConfig.java reads SQS_ENDPOINT env var to override endpoint for LocalStack
+helm/dev/orders.yaml injects: SQS_ENDPOINT=http://localstack:4566
 ```
 
 ---
@@ -756,14 +778,17 @@ userId, requestId) so they can be queried and correlated.
 
 | | LOCAL | DEV | STAGE | PROD |
 |---|---|---|---|---|
-| **Format** | Human-readable (pattern) | JSON (Logback) | JSON (Logback) | JSON (Logback) |
-| **Destination** | stdout / console | stdout → Docker log driver | CloudWatch Logs agent | CloudWatch Logs |
+| **Format** | Human-readable colored (console) | Human-readable colored (console) | JSON (Logstash encoder) | JSON (Logstash encoder) |
+| **Destination** | stdout / console | stdout → k3s node logging | CloudWatch Logs agent | CloudWatch Logs |
 | **Log group** | N/A | N/A | `/retailstore/stage/<service>` | `/retailstore/prod/<service>` |
 | **Correlation ID** | X-Correlation-Id header | Same | Same | Same |
-| **Trace ID** | None | Zipkin trace ID | AWS X-Ray trace ID | AWS X-Ray trace ID |
+| **Trace ID** | None | Zipkin trace ID (100% sampling) | Trace ID (10% sampling) | Trace ID (5% sampling) |
 | **PII masking** | None | None | Mask email in logs | Mask PII (email, card, address) |
 | **Log retention** | N/A | N/A | 30 days | 90 days |
-| **Search** | grep | grep / Docker logs | CloudWatch Insights | CloudWatch Insights + Grafana |
+| **Search** | grep | `kubectl logs -f deployment/X -n retailstore` | CloudWatch Insights | CloudWatch Insights + Grafana |
+
+**logback-spring.xml** controls format per profile: `<springProfile name="dev">` outputs colored
+console; `<springProfile name="stage,prod">` outputs JSON via `LogstashEncoder`.
 
 **Add to pom.xml for JSON logs (logstash-logback-encoder):**
 ```xml
@@ -782,7 +807,7 @@ The RED method: Rate, Errors, Duration. The USE method: Utilization, Saturation,
 
 | | LOCAL | DEV | STAGE | PROD |
 |---|---|---|---|---|
-| **Tool** | Micrometer + Actuator | Micrometer → Prometheus → Grafana (Docker) | Micrometer → CloudWatch Metrics | Micrometer → CloudWatch + Grafana |
+| **Tool** | Micrometer + Actuator | Micrometer + Actuator (k3s) | Micrometer → CloudWatch Metrics | Micrometer → CloudWatch + Grafana |
 | **Endpoint** | /actuator/metrics, /actuator/prometheus | Same | Same | Same |
 | **Dashboards** | None | Grafana (localhost:3001) | CloudWatch Dashboard | Grafana Cloud or self-hosted |
 | **Key metrics** | None monitored | http_server_requests, jvm_memory | + circuit breaker state, cache hit rate | + all, plus custom business metrics |
@@ -797,23 +822,24 @@ Essential for debugging "which service slowed down this request?"
 
 | | LOCAL | DEV | STAGE | PROD |
 |---|---|---|---|---|
-| **Tool** | None | Micrometer Tracing → Zipkin (Docker) | Micrometer Tracing → AWS X-Ray | AWS X-Ray |
+| **Tool** | None | Micrometer Tracing → Zipkin (k3s pod) | Micrometer Tracing → AWS X-Ray | AWS X-Ray |
 | **Trace propagation** | None | W3C TraceContext headers | W3C TraceContext | W3C TraceContext |
-| **Sampling** | N/A | 100% (all requests) | 10% (cost control) | 5% (production traffic) |
-| **Service map** | None | Zipkin UI (localhost:9411) | X-Ray Service Map | X-Ray Service Map |
+| **Sampling** | N/A | 100% (`probability: 1.0` in application-dev.yml) | 10% (`probability: 0.1`) | 5% (`probability: 0.05`) |
+| **Service map** | None | Zipkin UI (http://localhost:9411 via port-forward) | X-Ray Service Map | X-Ray Service Map |
 | **Latency percentiles** | None | Zipkin | CloudWatch + X-Ray | CloudWatch + X-Ray |
 
-**Add to all service pom.xml:**
+**Tracing is already configured in all pom.xml files:**
 ```xml
 <dependency>
   <groupId>io.micrometer</groupId>
-  <artifactId>micrometer-tracing-bridge-otel</artifactId>
+  <artifactId>micrometer-tracing-bridge-brave</artifactId>
 </dependency>
 <dependency>
-  <groupId>io.opentelemetry</groupId>
-  <artifactId>opentelemetry-exporter-otlp</artifactId>
+  <groupId>io.zipkin.reporter2</groupId>
+  <artifactId>zipkin-reporter-brave</artifactId>
 </dependency>
 ```
+Zipkin endpoint set in application-dev.yml: `http://${ZIPKIN_HOST:localhost}:9411/api/v2/spans`
 
 ---
 
@@ -831,7 +857,7 @@ ready to accept traffic (readiness).
 | **Endpoint** | /actuator/health | /actuator/health | /actuator/health/liveness, /readiness | Same |
 | **K8s liveness probe** | N/A | N/A | httpGet /actuator/health/liveness, initialDelay=30s | Same |
 | **K8s readiness probe** | N/A | N/A | httpGet /actuator/health/readiness, initialDelay=20s | Same |
-| **Docker healthcheck** | Not configured | Configured in docker-compose | N/A (K8s probes replace) | N/A |
+| **Docker healthcheck** | Not configured | N/A (k3s probes used) | N/A (K8s probes replace) | N/A |
 | **Startup probe** | N/A | N/A | httpGet /actuator/health/liveness, failureThreshold=12, period=10s | Same |
 | **Already configured** | ✅ spring.boot.actuator | ✅ | ✅ Helm template adds probes | ✅ |
 
@@ -969,12 +995,12 @@ based on CPU, memory, or custom metrics.
 
 | | LOCAL | DEV | STAGE | PROD |
 |---|---|---|---|---|
-| **Strategy** | N/A | docker compose up (rolling) | K8s Rolling Update | Argo Rollouts: Canary |
+| **Strategy** | N/A | Helm upgrade (k3s rolling) | K8s Rolling Update | Argo Rollouts: Canary |
 | **maxUnavailable** | N/A | N/A | 0 (zero downtime) | 0 |
 | **maxSurge** | N/A | N/A | 1 | 1 |
 | **Canary traffic** | N/A | N/A | N/A | 10% → 25% → 50% → 100% |
-| **Rollback** | N/A | docker compose up old | `kubectl rollout undo` | Argo Rollouts abort |
-| **Deployment tool** | IDE / mvn | docker compose | kubectl + Helm | ArgoCD + Helm |
+| **Rollback** | N/A | `helm rollback <release>` | `kubectl rollout undo` | Argo Rollouts abort |
+| **Deployment tool** | IDE / mvn | `deploy-services.sh` (Helm + ECR) | kubectl + Helm | ArgoCD + Helm |
 
 ---
 
@@ -1011,13 +1037,13 @@ every commit.
 
 | | LOCAL | DEV | STAGE | PROD |
 |---|---|---|---|---|
-| **Trigger** | Manual (IDE/mvn) | docker compose build | Push to `develop` branch | Push to `main` branch (after PR) |
-| **Build tool** | Maven | Maven | GitHub Actions | GitHub Actions |
+| **Trigger** | Manual (IDE/mvn) | `build-push.sh` + `deploy-services.sh` | Push to `develop` branch | Push to `main` branch (after PR) |
+| **Build tool** | Maven | Maven + Docker (`--platform linux/amd64`) | GitHub Actions | GitHub Actions |
 | **Test gate** | Skipped or manual | mvn test | mvn test (must pass) | mvn test + integration test (must pass) |
-| **Image registry** | Local Docker | Local Docker | AWS ECR | AWS ECR |
-| **Deploy tool** | Direct run | docker compose up | kubectl/Helm | ArgoCD |
+| **Image registry** | Local Docker | AWS ECR | AWS ECR | AWS ECR |
+| **Deploy tool** | Direct run | Helm (`deploy-services.sh`) | kubectl/Helm | ArgoCD |
 | **Approval gate** | N/A | N/A | None (auto-deploy) | Required (manual approval) |
-| **Rollback** | N/A | docker compose up old | kubectl rollout undo | ArgoCD rollback |
+| **Rollback** | N/A | `helm rollback <release>` | kubectl rollout undo | ArgoCD rollback |
 
 ---
 
@@ -1156,16 +1182,20 @@ recovers gracefully (circuit breakers trip, retries kick in, fallbacks serve sta
 @SpringBootTest
 @Testcontainers
 class OrderServiceIntegrationTest {
-    
+
     @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
-    
+    static MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.0")
+        .withDatabaseName("ordersdb")
+        .withUsername("orders_user")
+        .withPassword("orders_pass");
+
     @Container
     static KeycloakContainer keycloak = new KeycloakContainer("quay.io/keycloak/keycloak:25.0.6")
         .withRealmImportFile("retailstore-realm.json");
-    
-    // Tests run against real PostgreSQL and real Keycloak
+
+    // Tests run against real MySQL 8 and real Keycloak
     // No mocks — this catches the real integration bugs
+    // MySQL 8 matches stage (RDS MySQL) and dev (k3s Bitnami MySQL)
 }
 ```
 
@@ -1251,7 +1281,7 @@ retailstore-platform/terraform/
 ├── modules/                      ← reusable components
 │   ├── vpc/                      ← VPC, subnets, IGW, NAT, route tables
 │   ├── eks/                      ← EKS cluster, node groups, OIDC provider
-│   ├── rds/                      ← PostgreSQL, parameter groups, subnet groups
+│   ├── rds/                      ← MySQL 8.0, parameter groups, subnet groups
 │   ├── elasticache/              ← Redis, subnet groups, parameter groups
 │   ├── dynamodb/                 ← tables, TTL, PITR, backup
 │   ├── sqs/                      ← queues, DLQ, access policies
@@ -1281,6 +1311,7 @@ retailstore-platform/terraform/
 |---|---|---|
 | **EKS nodes** | 2x t3.large (2 vCPU, 8 GB) | 3–9x m5.large (2 vCPU, 8 GB) |
 | **EKS node AZs** | 1 AZ | 3 AZs |
+| **RDS engine** | MySQL 8.0 | MySQL 8.0 (Aurora) |
 | **RDS instance** | db.t3.medium (1 vCPU, 4 GB) | db.r5.large (2 vCPU, 16 GB) |
 | **RDS Multi-AZ** | No | Yes |
 | **RDS read replica** | No | 1 |
@@ -1299,25 +1330,36 @@ retailstore-platform/terraform/
 
 ```
 retailstore-platform/helm/
-├── catalog-service/              ← the Helm chart (one chart, reused)
-│   ├── Chart.yaml
-│   ├── templates/
-│   │   ├── deployment.yaml
-│   │   ├── service.yaml
-│   │   ├── configmap.yaml
-│   │   ├── hpa.yaml              ← enabled only in prod
-│   │   ├── pdb.yaml              ← enabled only in prod
-│   │   └── networkpolicy.yaml   ← enabled in stage + prod
-│   └── values.yaml              ← base values (defaults)
+├── dev/                          ← dev Helm value overrides (one file per service)
+│   ├── gateway.yaml              ← appEnv: SPRING_PROFILES_ACTIVE=dev, Keycloak host, routes
+│   ├── catalog.yaml              ← MySQL creds, Redis host, Keycloak host
+│   ├── carts.yaml                ← DynamoDB endpoint, AWS region
+│   ├── checkout.yaml             ← Redis, Keycloak, order URL
+│   ├── orders.yaml               ← MySQL, SQS queue URL, LocalStack endpoint
+│   └── experience.yaml           ← downstream service URLs, Keycloak client secret
 │
-└── environments/
-    ├── local/                    ← not used (no K8s locally)
-    ├── dev/
-    │   └── catalog.yaml          ← 1 replica, no HPA, loose limits (current)
-    ├── stage/
-    │   └── catalog.yaml          ← 1 replica, no HPA, tight limits, JWKS from SM
-    └── prod/
-        └── catalog.yaml          ← 2 replicas, HPA 2–5, PDB, strict limits
+├── stage/                        ← stage overrides (2 replicas, autoscaling 2–4)
+│   └── (same 6 files, AWS endpoints via # Replace: placeholders)
+│
+├── prod/                         ← prod overrides (3 replicas, autoscaling 3–8)
+│   └── (same 6 files, AWS endpoints via # Replace: placeholders)
+│
+└── infra/                        ← Bitnami chart value files for dev infra
+    ├── mysql-values.yaml         ← Bitnami MySQL 11.1.14 (MySQL 8.0); init SQL for 3 DBs
+    ├── redis-values.yaml         ← Bitnami Redis 20.1.7; standalone, no auth
+    └── keycloak-values.yaml      ← Bitnami Keycloak 22.2.1; external MySQL; realm import
+
+Each service's Helm chart lives IN the service directory:
+  <service-dir>/chart/
+  ├── Chart.yaml
+  ├── values.yaml                 ← base defaults (image, port, probes, resource limits)
+  └── templates/
+      ├── deployment.yaml         ← uses ConfigMap ref + optional Secret ref
+      ├── service.yaml            ← ClusterIP; fullnameOverride sets DNS name
+      ├── configmap.yaml          ← loads appEnv from values.yaml
+      ├── hpa.yaml                ← enabled when autoscaling.enabled=true (prod)
+      ├── pdb.yaml                ← enabled when pdb.enabled=true (prod)
+      └── serviceaccount.yaml
 ```
 
 ---
@@ -1328,19 +1370,19 @@ retailstore-platform/helm/
 
 | Spring Profile | Activated By | Applies To |
 |---|---|---|
-| `default` | No `SPRING_PROFILES_ACTIVE` set | Developer's local machine, IDE |
-| `dev` | `SPRING_PROFILES_ACTIVE=dev` | Docker Compose |
-| `stage` | `SPRING_PROFILES_ACTIVE=stage` | AWS EKS stage |
-| `prod` | `SPRING_PROFILES_ACTIVE=prod` | AWS EKS prod |
+| `default` | No `SPRING_PROFILES_ACTIVE` set | Developer's local machine, IDE (H2 in-memory) |
+| `dev` | `SPRING_PROFILES_ACTIVE=dev` | k3s on EC2 (MySQL, Redis, Zipkin) |
+| `stage` | `SPRING_PROFILES_ACTIVE=stage` | AWS EKS stage (RDS MySQL, ElastiCache) |
+| `prod` | `SPRING_PROFILES_ACTIVE=prod` | AWS EKS prod (tighter limits, Swagger disabled) |
 
 ### 9.2 File Layout per Service
 
 ```
 src/main/resources/
-├── application.yml              ← base config (shared by all environments)
-├── application-dev.yml          ← dev overrides (docker-compose PostgreSQL, LocalStack)
-├── application-stage.yml        ← stage overrides (RDS, ElastiCache, X-Ray, JSON logs)
-└── application-prod.yml         ← prod overrides (tighter limits, Swagger disabled)
+├── application.yml              ← base config (H2 defaults, localhost env var defaults)
+├── application-dev.yml          ← dev overrides (MySQL k3s, Redis k3s, Zipkin, 100% tracing)
+├── application-stage.yml        ← stage overrides (RDS MySQL, ElastiCache, JSON logs, 10% tracing)
+└── application-prod.yml         ← prod overrides (tighter limits, Swagger disabled, 5% tracing)
 ```
 
 ### 9.3 What Goes in Each Layer
@@ -1353,24 +1395,46 @@ src/main/resources/
 - H2 datasource (local default)
 - `spring.cache.type: simple` (local default)
 
-**`application-dev.yml` (add per service):**
+**`application-dev.yml` (per service — created for all 6 services):**
 ```yaml
 spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/catalogdb?useSSL=false&...
+    driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:
       ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
   flyway:
     enabled: true
   cache:
     type: redis
   data:
     redis:
-      host: ${REDIS_HOST:redis}
-      port: 6379
+      host: ${REDIS_HOST:localhost}    ← localhost = port-forward to k3s redis
+      port: ${REDIS_PORT:6379}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}/realms/retailstore/...
+management:
+  tracing:
+    sampling:
+      probability: 1.0           ← 100% in dev
+  zipkin:
+    tracing:
+      endpoint: http://${ZIPKIN_HOST:localhost}:9411/api/v2/spans
 logging:
   level:
     com.retailstore: DEBUG
 ```
+
+**Pattern:** All dev configs use `${VAR:localhost}` defaults. IntelliJ connects via
+`kubectl port-forward` (localhost resolves to k3s infra). k3s pods get real DNS names
+injected as env vars via Helm dev values (`MYSQL_HOST=mysql`, `REDIS_HOST=redis-master`, etc.).
 
 **`application-stage.yml` (add per service):**
 ```yaml
@@ -1433,23 +1497,25 @@ resilience4j:
 
 ### Monthly AWS Cost (approximate, us-east-1)
 
-| Resource | STAGE | PROD |
-|---|---|---|
-| EKS cluster control plane | $73 | $73 |
-| EC2 nodes (t3.large x2 / m5.large x3) | $120 | $270 |
-| RDS PostgreSQL (t3.medium / r5.large) | $55 | $200 |
-| ElastiCache (t3.micro / r6g.large) | $12 | $185 |
-| DynamoDB (on-demand, low traffic) | $5 | $25 |
-| SQS | $1 | $5 |
-| ALB | $20 | $20 |
-| CloudFront | $0 | $15 |
-| WAF | $15 | $30 |
-| Secrets Manager (8 secrets) | $3 | $3 |
-| CloudWatch logs + metrics | $10 | $30 |
-| X-Ray | $2 | $8 |
-| ECR | $2 | $5 |
-| NAT Gateway | $32 | $32 |
-| **Total** | **~$350/month** | **~$901/month** |
+| Resource | DEV | STAGE | PROD |
+|---|---|---|---|
+| EC2 t3.xlarge (k3s, 8hr/day 20days/mo) | ~$27 | — | — |
+| EC2 EBS 30GB gp3 | ~$2 | — | — |
+| ECR storage (all images) | ~$1 | ~$2 | ~$5 |
+| EKS cluster control plane | — | $73 | $73 |
+| EC2 nodes (t3.large x2 / m5.large x3) | — | $120 | $270 |
+| RDS MySQL (t3.medium / r5.large) | — | $55 | $200 |
+| ElastiCache (t3.micro / r6g.large) | — | $12 | $185 |
+| DynamoDB (on-demand, low traffic) | — | $5 | $25 |
+| SQS | — | $1 | $5 |
+| ALB | — | $20 | $20 |
+| CloudFront | — | $0 | $15 |
+| WAF | — | $15 | $30 |
+| Secrets Manager (8 secrets) | — | $3 | $3 |
+| CloudWatch logs + metrics | — | $10 | $30 |
+| X-Ray / tracing | — | $2 | $8 |
+| NAT Gateway | — | $32 | $32 |
+| **Total** | **~$30/month** | **~$350/month** | **~$901/month** |
 
 **Cost control tips:**
 - Stage: run during business hours only (cron to scale to 0 at night) → saves ~50%
@@ -1460,56 +1526,59 @@ resilience4j:
 
 ## 11. Implementation Order
 
-### Phase 1: Local Profile (1–2 days)
-1. Add `docker-compose.infra-only.yml` with Keycloak + Redis + DynamoDB Local
-2. Add `application-dev.yml` to each service (PostgreSQL, Redis, Flyway)
-3. Add Flyway migrations for catalog and orders
-4. Verify all services start with `./mvnw spring-boot:run -Dspring-boot.run.profiles=dev`
+### Phase 1: Auth + Local Profile ✅ DONE
+1. Replace `identity-service` with Keycloak 25
+2. Add `GlobalJwtFilter` to api-gateway (JWKS validation)
+3. Add `spring-security-oauth2-resource-server` to all 5 services
+4. Add `ServiceTokenProvider` (Client Credentials) to experience-service and checkout-service
+5. All services run locally with `SPRING_PROFILES_ACTIVE` unset (H2 + localhost Keycloak)
 
-### Phase 2: Dev Docker Compose (already done + enhancements)
-1. Add LocalStack to docker-compose for SQS
-2. Add Zipkin for distributed tracing
-3. Add Prometheus + Grafana containers
-4. Add logstash-logback-encoder for JSON logs
-5. Enable `RETAIL_ORDER_MESSAGING_ENABLED=true` with LocalStack
+### Phase 2: Spring Profiles + k3s Dev Environment ✅ DONE
+1. Create `application-dev.yml` for all 6 services (MySQL, Redis, Zipkin)
+2. Create `application-stage.yml` for all 6 services (RDS MySQL, ElastiCache, no defaults)
+3. Create `application-prod.yml` for all 6 services (tighter limits, Swagger disabled)
+4. Add `logback-spring.xml` with profile-based JSON vs console output
+5. Add Flyway MySQL migrations for catalog and orders
+6. Create Helm charts in `<service-dir>/chart/` for all 6 services
+7. Create Helm dev values (`helm/dev/*.yaml`) and infra values (`helm/infra/*.yaml`)
+8. Create Helm stage and prod values (`helm/stage/*.yaml`, `helm/prod/*.yaml`)
+9. Create k8s manifests for dev infra (`k8s/dev/`: namespace, DynamoDB Local, LocalStack, Zipkin)
+10. Create automation scripts: `start-dev.sh`, `stop-dev.sh`, `install-infra.sh`,
+    `deploy-services.sh`, `build-push.sh`, `port-forward.sh`
+11. Fix all 6 Dockerfiles (Maven Docker image, no mvnw)
+12. Update `SqsConfig.java` to support LocalStack via `SQS_ENDPOINT` env var
 
-### Phase 3: Spring Profiles (1–2 days)
-1. Create `application-stage.yml` for each service
-2. Create `application-prod.yml` for each service
-3. Add `logback-spring.xml` with profile-based JSON vs console output
-4. Add Resilience4j retry config
-5. Add bulkhead config for dev+
-
-### Phase 4: Stage Infrastructure (3–5 days)
+### Phase 3: Stage Infrastructure (3–5 days) — TODO
 1. Write Terraform for network module (VPC, subnets, NAT)
 2. Write Terraform for EKS module
-3. Write Terraform for RDS, ElastiCache, DynamoDB, SQS
-4. Write Helm charts for stage environment
-5. Write GitHub Actions CI pipeline
+3. Write Terraform for RDS MySQL, ElastiCache, DynamoDB, SQS
+4. Write GitHub Actions CI pipeline (build → ECR → deploy to stage EKS)
+5. Fill in `# Replace:` placeholders in `helm/stage/*.yaml` with real AWS endpoints
 6. Deploy to stage; run smoke tests
 
-### Phase 5: Prod Infrastructure (3–5 days)
-1. Write Terraform prod module (based on stage, different sizing)
+### Phase 4: Prod Infrastructure (3–5 days) — TODO
+1. Write Terraform prod module (based on stage, HA sizing)
 2. Install ArgoCD on prod cluster
 3. Configure WAF rules
 4. Configure CloudFront
-5. Set up PDB, HPA, topology spread
+5. Set up PDB, HPA, topology spread constraints
 6. Configure Secrets Manager + External Secrets Operator
 7. Deploy to prod; run smoke tests
 
-### Phase 6: Observability (2–3 days)
-1. Add Micrometer Tracing → X-Ray
-2. Configure CloudWatch Log Groups per service
-3. Build CloudWatch Dashboard
-4. Add CloudWatch Alarms (error rate > 5%, circuit breaker OPEN)
+### Phase 5: Observability (2–3 days) — TODO
+1. Configure CloudWatch Log Groups per service
+2. Build CloudWatch Dashboard (RED metrics: rate, errors, duration)
+3. Add CloudWatch Alarms (error rate > 5%, circuit breaker OPEN, DLQ depth > 0)
+4. Wire Micrometer → X-Ray for stage/prod (replace Zipkin exporter)
 5. Set up Grafana dashboard
 
-### Phase 7: Advanced (optional, as needed)
+### Phase 6: Advanced (optional, as needed) — TODO
+- Unit tests + Testcontainers integration tests per service
 - Contract tests with Pact
 - Canary deployments with Argo Rollouts
 - Feature flags with Unleash
 - Chaos experiments with AWS FIS
-- Istio service mesh
+- Istio service mesh (mTLS Tier 2)
 
 ---
 

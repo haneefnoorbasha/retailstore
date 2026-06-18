@@ -1,6 +1,20 @@
-# RetailStore — Dev Environment Setup Guide
+# RetailStore — Developer Guide
 
-## Overview
+> This guide covers the **dev environment** (k3s on EC2). For stage and prod, see the
+> [platform-design.md](platform-design.md) Sections 8, 9, and 11.
+
+## Environment Quick Reference
+
+| Profile | Infrastructure | How to run | What changes |
+|---|---|---|---|
+| `default` (no profile) | Local machine, H2 in-memory | `mvn spring-boot:run` in IntelliJ | Nothing to set up — works instantly |
+| `dev` | k3s on EC2 (this guide) | `start-dev.sh` + `port-forward.sh` | MySQL, Redis, Keycloak, Zipkin via port-forward |
+| `stage` | AWS EKS (Terraform required) | GitHub Actions CI → EKS deploy | Replace `# Replace:` vars in `helm/stage/*.yaml` |
+| `prod` | AWS EKS HA (Terraform required) | ArgoCD → EKS canary deploy | Replace `# Replace:` vars in `helm/prod/*.yaml` |
+
+---
+
+## Dev Environment Overview
 
 The dev environment runs the full RetailStore stack on a **k3s cluster inside an EC2 instance**. You start and stop the EC2 on demand to keep costs near zero when not working.
 
@@ -453,3 +467,77 @@ kubectl get pods -n retailstore
 kubectl logs -f deployment/catalog -n retailstore
 kubectl exec -it deployment/catalog -n retailstore -- sh
 ```
+
+---
+
+## Part 9: Stage / Prod Deployment Reference
+
+Stage and prod use **AWS EKS** (not k3s). The Helm charts and Spring Boot profiles are identical;
+only the Helm values files differ.
+
+### Before You Can Deploy to Stage
+
+1. **Run Terraform** to provision the AWS infrastructure:
+   ```bash
+   cd retailstore-platform/terraform/environments/stage
+   terraform init && terraform apply
+   # Outputs: RDS endpoint, ElastiCache endpoint, EKS cluster name
+   ```
+
+2. **Fill in the placeholders** in all `helm/stage/*.yaml` files:
+   ```yaml
+   # Every file has these with "# Replace:" comments:
+   KEYCLOAK_JWKS_URI: "https://auth.stage.retailstore.com/realms/retailstore/..."
+   RDS_ENDPOINT: "your-rds.us-east-1.rds.amazonaws.com"
+   REDIS_HOST: "your-elasticache.cache.amazonaws.com"
+   ```
+
+3. **Set up the GitHub Actions CI pipeline** (`.github/workflows/*.yml`) with:
+   - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` secrets
+   - `ECR_REGISTRY` variable
+   - `EKS_CLUSTER_NAME` and `EKS_REGION` variables
+
+4. **Import the Keycloak realm** into stage Keycloak after first deploy.
+
+### Spring Profile Activation (stage / prod)
+
+```yaml
+# helm/stage/gateway.yaml  (and all other services)
+appEnv:
+  SPRING_PROFILES_ACTIVE: "stage"
+  KEYCLOAK_JWKS_URI: "..."      # real EKS Keycloak URL
+  RDS_ENDPOINT: "..."           # real RDS endpoint
+  REDIS_HOST: "..."             # real ElastiCache endpoint
+  TRACING_ENDPOINT: "..."       # AWS X-Ray or OTEL collector
+```
+
+```yaml
+# helm/prod/gateway.yaml
+appEnv:
+  SPRING_PROFILES_ACTIVE: "prod"
+  # Same vars as stage + prod-specific values
+  # Swagger disabled in application-prod.yml
+  # Health show-details: never
+  # 5% trace sampling
+```
+
+### What application-stage.yml enables vs dev
+
+| Feature | DEV | STAGE |
+|---|---|---|
+| Database | MySQL via `${MYSQL_HOST:localhost}` | MySQL via `${RDS_ENDPOINT}` (no default — must be set) |
+| Redis SSL | No | `spring.data.redis.ssl.enabled: true` |
+| JDBC SSL | No | `useSSL=true&requireSSL=true` in URL |
+| Tracing | 100% to Zipkin | 10% (configured by `TRACING_ENDPOINT`) |
+| Logging format | Colored console | JSON (Logstash encoder) |
+| Swagger | Enabled | Enabled (internal URL only) |
+| Health details | `always` | `when-authorized` |
+
+### What application-prod.yml adds on top of stage
+
+- `springdoc.api-docs.enabled: false` (Swagger completely disabled)
+- `management.endpoint.health.show-details: never`
+- `management.tracing.sampling.probability: 0.05` (5%)
+- HikariCP `leak-detection-threshold: 60000ms`
+- `logging.level: WARN` (not INFO)
+- Tighter Resilience4j thresholds (failure rate 40%, wait 20s)

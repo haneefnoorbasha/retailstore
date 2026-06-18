@@ -251,3 +251,230 @@ can only update their own cart item" — that is business logic.
 | Fine-grained authz | **Individual services** | Business logic must live with the domain |
 | Logout | **Keycloak session invalidation + token revocation** | Immediate revocation vs waiting for expiry |
 | User storage | **Keycloak internal user store** | For now; can federate to LDAP/AD later without code changes |
+| Issuer validation | **Disabled (jwk-set-uri only, no issuer-uri)** | Avoids issuer mismatch between k3s internal DNS and localhost |
+
+---
+
+## 9. Environment / Profile-Wise Authentication Analysis
+
+This section covers how authentication configuration changes across Spring Boot profiles.
+The same code runs in all environments; only external configuration differs.
+
+---
+
+### 9.1 Profile Overview
+
+| Aspect | LOCAL (default) | DEV | STAGE | PROD |
+|---|---|---|---|---|
+| **Keycloak location** | Local Docker container | k3s Bitnami pod on EC2 | EKS Bitnami pod | EKS Bitnami HA (2 pods) |
+| **Keycloak DB** | H2 embedded | MySQL `keycloakdb` (k3s) | RDS MySQL (shared) | RDS MySQL (dedicated) |
+| **JWKS URI config** | Composed from HOST/PORT vars | Composed from HOST/PORT vars | Single `KEYCLOAK_JWKS_URI` var | Single `KEYCLOAK_JWKS_URI` var |
+| **Token endpoint config** | Composed from HOST/PORT vars | Composed from HOST/PORT vars | Single `KEYCLOAK_TOKEN_URI` var | Single `KEYCLOAK_TOKEN_URI` var |
+| **Client secrets location** | application.yml defaults | k8s env vars (Helm dev values) | K8s Secret (optional: true) | AWS Secrets Manager |
+| **Issuer validation** | Disabled | Disabled | Disabled | Disabled |
+| **Swagger UI** | Enabled | Enabled | Enabled (internal only) | **Disabled** |
+| **Health show-details** | `always` | `always` | `when-authorized` | `never` |
+| **Tracing sampling** | N/A | 100% | 10% | 5% |
+
+---
+
+### 9.2 JWKS URI Pattern Per Profile
+
+The gateway and all downstream services validate tokens by fetching Keycloak's public keys.
+The URI is never the same in every environment — here is how each profile wires it up.
+
+#### LOCAL (default profile — `application.yml`)
+
+```yaml
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: >
+            http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}
+            /realms/retailstore/protocol/openid-connect/certs
+```
+
+`KEYCLOAK_HOST` and `KEYCLOAK_PORT` are not set → defaults to `localhost:8180`.
+Developer runs Keycloak as a local Docker container on port 8180.
+
+#### DEV profile (`application-dev.yml`)
+
+```yaml
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: >
+            http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}
+            /realms/retailstore/protocol/openid-connect/certs
+```
+
+Same `${VAR:localhost}` pattern. Two scenarios:
+
+| Actor | How it connects | KEYCLOAK_HOST resolves to |
+|---|---|---|
+| IntelliJ (IDE) | `kubectl port-forward svc/keycloak 8180:8180` | `localhost` (default) |
+| k3s pod | Helm dev values inject `KEYCLOAK_HOST=keycloak` | `keycloak` (k3s ClusterIP DNS) |
+
+**Key detail:** `helm/dev/gateway.yaml` and all other dev values files set:
+```yaml
+appEnv:
+  KEYCLOAK_HOST: "keycloak"
+  KEYCLOAK_PORT: "8180"
+```
+
+#### STAGE profile (`application-stage.yml`)
+
+```yaml
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI}
+```
+
+`KEYCLOAK_JWKS_URI` has **no default** — it must be injected. Source: `helm/stage/*.yaml`:
+```yaml
+appEnv:
+  KEYCLOAK_JWKS_URI: ""  # Replace: https://auth.stage.retailstore.com/realms/retailstore/protocol/openid-connect/certs
+```
+
+#### PROD profile (`application-prod.yml`)
+
+Same as stage. `KEYCLOAK_JWKS_URI` injected from `helm/prod/*.yaml` or AWS Secrets Manager.
+
+---
+
+### 9.3 Issuer Validation — Why It Is Disabled
+
+Spring Security can validate the `iss` claim in the JWT against the configured issuer URI.
+This is intentionally disabled across all environments.
+
+**The problem:**
+```
+Token issued inside k3s by Keycloak pod:
+  iss = "http://keycloak:8180/realms/retailstore"    ← internal k3s DNS name
+
+IntelliJ service (local dev) validates the token:
+  expected iss = "http://localhost:8180/realms/retailstore"  ← port-forwarded address
+  MISMATCH → 401 Unauthorized
+```
+
+**Our approach:** Use `jwk-set-uri` only (not `issuer-uri`). Spring's `NimbusReactiveJwtDecoder`
+built with `withJwkSetUri(...)` validates signature, expiry, and audience — but NOT issuer.
+This is a deliberate trade-off: dev ergonomics vs issuer validation strictness.
+
+**In production**, this is acceptable because:
+- The gateway is the only public entry point; tokens must come from Keycloak
+- JWKS signature validation ensures tokens weren't forged
+- ALB + VPC security groups prevent token injection from outside
+
+**If you want to add issuer validation** (stage/prod only), configure a single issuer URI:
+```yaml
+# application-stage.yml
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI}  # https://auth.stage.retailstore.com/realms/retailstore
+```
+This would require a public-facing Keycloak URL that is consistent from inside and outside EKS.
+
+---
+
+### 9.4 Client Secrets Management Per Environment
+
+Two services use OAuth2 Client Credentials (M2S): `experience-service` and `checkout-service`.
+
+#### Where secrets live per profile
+
+| Profile | experience-service | checkout-service |
+|---|---|---|
+| **LOCAL** | `application.yml` default: `experience-service-secret` | `application.yml` default: `checkout-service-secret` |
+| **DEV** | `helm/dev/experience.yaml` env var: `KEYCLOAK_CLIENT_SECRET` | `helm/dev/checkout.yaml` env var: `KEYCLOAK_CLIENT_SECRET` |
+| **STAGE** | k8s Secret `experience-secrets` key `client-secret` | k8s Secret `checkout-secrets` key `client-secret` |
+| **PROD** | AWS Secrets Manager → External Secrets Operator → k8s Secret | Same |
+
+#### Helm chart Secret wiring (`optional: true`)
+
+```yaml
+# <service>/chart/templates/deployment.yaml (excerpt)
+env:
+  - name: KEYCLOAK_CLIENT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: experience-secrets
+        key: client-secret
+        optional: true       ← dev works without creating k8s Secrets manually
+```
+
+`optional: true` means the pod starts even if the Secret doesn't exist. In dev, the value is
+set directly via Helm values (as a plain env var). In stage/prod, the k8s Secret must be
+created before deployment.
+
+#### Token endpoint URI (for Client Credentials token fetch)
+
+```yaml
+# DEV — application-dev.yml (experience-service, checkout-service)
+retail:
+  experience:
+    keycloak:
+      token-uri: http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}/realms/retailstore/protocol/openid-connect/token
+
+# STAGE / PROD — application-stage.yml, application-prod.yml
+retail:
+  experience:
+    keycloak:
+      token-uri: ${KEYCLOAK_TOKEN_URI}    # injected from helm/stage/experience.yaml
+```
+
+---
+
+### 9.5 Security Settings That Tighten Per Environment
+
+| Setting | LOCAL | DEV | STAGE | PROD |
+|---|---|---|---|---|
+| **Swagger UI** | `/swagger-ui.html` enabled | Enabled | Enabled (internal only) | `springdoc.api-docs.enabled: false` |
+| **Health show-details** | `always` | `always` | `when-authorized` | `never` |
+| **Actuator endpoints** | All exposed | All exposed | `health, info, metrics, prometheus` | Same (no env endpoint) |
+| **HikariCP leak detection** | None | None | None | `leak-detection-threshold: 60000ms` |
+| **Log level** | DEBUG | DEBUG | INFO | WARN |
+| **Resilience4j failure rate** | 60% | 50% | 50% | 40% |
+| **Resilience4j wait in OPEN** | 5s | 10s | 10s | 15–20s |
+
+---
+
+### 9.6 Keycloak Realm Across Environments
+
+The same realm (`retailstore`) is used in all environments. It is managed as:
+- **DEV**: JSON file at `retailstore-platform/keycloak/realms/retailstore-realm.json`,
+  imported via a k8s ConfigMap mounted into the Keycloak pod at startup
+- **STAGE/PROD**: Same realm JSON applied manually after first Keycloak deploy, or
+  managed via Keycloak Admin API / Terraform Keycloak provider
+
+#### Realm clients
+
+| Client ID | Flow | Used By |
+|---|---|---|
+| `web-storefront` | Authorization Code + PKCE | React SPA (browser login) |
+| `experience-service` | Client Credentials | experience-service → catalog/cart/orders M2S calls |
+| `checkout-service` | Client Credentials | checkout-service → order-service M2S calls |
+
+#### Token claims forwarded by api-gateway
+
+After JWKS validation, `GlobalJwtFilter` extracts these claims and injects them as headers:
+```
+X-User-Id     ← JWT sub claim
+X-User-Email  ← JWT email claim
+X-User-Name   ← JWT preferred_username claim
+X-User-Role   ← JWT realm_access.roles[] (first matching role)
+```
+
+Downstream services read these headers to identify the caller without re-validating the JWT.
+This is the industry-standard pattern (Netflix, Zalando, Walmart) when using an API gateway
+as the single auth entry point.
