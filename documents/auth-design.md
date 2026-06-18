@@ -350,13 +350,18 @@ public class SecurityConfig {
 ### 4.4 application.yml additions
 
 ```yaml
+# base application.yml — works with default (local) and dev profiles
 spring:
   security:
     oauth2:
       resourceserver:
         jwt:
-          jwk-set-uri: ${KEYCLOAK_JWKS_URI:http://keycloak:8180/realms/retailstore/protocol/openid-connect/certs}
-          issuer-uri:  ${KEYCLOAK_ISSUER_URI:http://keycloak:8180/realms/retailstore}
+          # Composed from HOST/PORT vars so the same yaml works for local and dev.
+          # issuer-uri is intentionally NOT set — see auth-analysis.md Section 9.3
+          # for why issuer validation is disabled across all environments.
+          jwk-set-uri: >
+            http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}
+            /realms/retailstore/protocol/openid-connect/certs
 
 # Add checkout route (previously missing)
 routes:
@@ -370,7 +375,30 @@ routes:
           name: checkout-cb
           fallbackUri: forward:/fallback/checkout
 
-# Remove identity-service route (Keycloak handles this directly)
+# Remove identity-service route (Keycloak handles auth directly)
+```
+
+**application-dev.yml** (gateway):
+```yaml
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: >
+            http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}
+            /realms/retailstore/protocol/openid-connect/certs
+```
+k3s pod gets `KEYCLOAK_HOST=keycloak` from `helm/dev/gateway.yaml`. IntelliJ uses localhost default.
+
+**application-stage.yml and application-prod.yml** (gateway):
+```yaml
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI}    # no default — must be injected from helm/stage/gateway.yaml
 ```
 
 ---
@@ -441,13 +469,28 @@ public class OrderController {
 
 ### 5.4 application.yml additions (all downstream services)
 
+Same pattern as gateway. Base `application.yml` uses composed HOST/PORT:
+
 ```yaml
+# application.yml (base — default and dev profiles)
 spring:
   security:
     oauth2:
       resourceserver:
         jwt:
-          jwk-set-uri: ${KEYCLOAK_JWKS_URI:http://keycloak:8180/realms/retailstore/protocol/openid-connect/certs}
+          jwk-set-uri: >
+            http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}
+            /realms/retailstore/protocol/openid-connect/certs
+```
+
+```yaml
+# application-stage.yml / application-prod.yml
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI}    # no default — injected from Helm values
 ```
 
 ---
@@ -596,36 +639,78 @@ api.interceptors.request.use(async config => {
 
 ---
 
-## 8. Keycloak — Docker Compose Setup
+## 8. Keycloak Setup Per Environment
 
-```yaml
-# In retailstore-platform/docker-compose.yml — add:
+### LOCAL (default profile) — Developer Machine
 
-keycloak:
-  image: quay.io/keycloak/keycloak:25.0.6
-  container_name: keycloak
-  command: start-dev --import-realm
-  environment:
-    KEYCLOAK_ADMIN: admin
-    KEYCLOAK_ADMIN_PASSWORD: admin
-    KC_DB: dev-file                     # H2 file-based for local dev
-    KC_HTTP_PORT: 8180
-    KC_HOSTNAME_STRICT: "false"
-    KC_HOSTNAME_STRICT_HTTPS: "false"
-  ports:
-    - "8180:8180"
-  volumes:
-    - ./keycloak/realms:/opt/keycloak/data/import   # realm JSON auto-imported
-  networks: [retailstore]
-  healthcheck:
-    test: ["CMD-SHELL", "curl -sf http://localhost:8180/realms/retailstore || exit 1"]
-    interval: 15s
-    timeout: 10s
-    retries: 10
-    start_period: 60s
+For local development (no `SPRING_PROFILES_ACTIVE`), run Keycloak as a standalone Docker container:
+
+```bash
+docker run -d --name keycloak \
+  -p 8180:8180 \
+  -e KEYCLOAK_ADMIN=admin \
+  -e KEYCLOAK_ADMIN_PASSWORD=admin \
+  -e KC_HTTP_PORT=8180 \
+  -e KC_HOSTNAME_STRICT=false \
+  -v $(pwd)/retailstore-platform/keycloak/realms:/opt/keycloak/data/import \
+  quay.io/keycloak/keycloak:25.0.6 start-dev --import-realm
 ```
 
-### Realm Export (retailstore-platform/keycloak/realms/retailstore-realm.json)
+This is used when running services directly in IntelliJ with the `default` profile.
+
+### DEV (dev profile) — k3s on EC2
+
+Keycloak runs as a **Bitnami Helm chart** (chart version 22.2.1, Keycloak 25) on the k3s cluster.
+It uses MySQL `keycloakdb` (same MySQL instance as catalog and orders) and imports the realm JSON
+from a k8s ConfigMap at startup.
+
+**Helm infra values** (`helm/infra/keycloak-values.yaml`):
+```yaml
+# Bitnami Keycloak 22.2.1 on k3s
+auth:
+  adminUser: admin
+  adminPassword: admin
+production: false
+proxy: edge
+extraArgs: "--import-realm"
+extraEnvVars:
+  - name: KC_HTTP_PORT
+    value: "8180"
+  - name: KC_HOSTNAME_STRICT
+    value: "false"
+extraVolumeMounts:
+  - name: realm-config
+    mountPath: /opt/keycloak/data/import
+extraVolumes:
+  - name: realm-config
+    configMap:
+      name: keycloak-realm
+```
+
+**Realm import** — `install-infra.sh` creates the ConfigMap from the realm JSON file:
+```bash
+kubectl create configmap keycloak-realm \
+  --from-file=retailstore-realm.json=keycloak/realms/retailstore-realm.json \
+  -n retailstore
+```
+
+**To update the realm** after changes:
+```bash
+kubectl create configmap keycloak-realm \
+  --from-file=retailstore-realm.json=keycloak/realms/retailstore-realm.json \
+  -n retailstore --dry-run=client -o yaml | kubectl apply -f -
+kubectl rollout restart statefulset/keycloak -n retailstore
+```
+
+### STAGE / PROD — EKS Bitnami
+
+Same Bitnami chart, deployed to EKS with:
+- External RDS MySQL (not in-cluster)
+- A public-facing hostname for the Keycloak URL
+- HTTPS termination via ALB
+- 2 replicas + PodDisruptionBudget in prod
+
+### Realm JSON (retailstore-platform/keycloak/realms/retailstore-realm.json)
 
 The realm JSON defines:
 - Realm name: `retailstore`
@@ -640,35 +725,51 @@ The realm JSON defines:
 
 ## 9. Kubernetes / Helm Changes
 
-### Keycloak Helm Chart (retailstore-platform/helm/dev/keycloak.yaml)
+### Helm Values Structure (actual implementation)
 
-```yaml
-# Uses bitnami/keycloak chart
-auth:
-  adminUser: admin
-  adminPassword: admin
-production: false
-proxy: edge
-extraEnvVars:
-  - name: KC_HOSTNAME_STRICT
-    value: "false"
-keycloakConfigCli:
-  enabled: true
-  configuration:
-    retailstore.yaml: |
-      realm: retailstore
-      enabled: true
-      ...
+```
+retailstore-platform/helm/
+├── dev/            ← dev env overrides (one file per service)
+├── stage/          ← stage env overrides
+├── prod/           ← prod env overrides
+└── infra/          ← Bitnami chart values for MySQL, Redis, Keycloak
+    └── keycloak-values.yaml   ← Bitnami Keycloak 22.2.1 (Keycloak 25)
 ```
 
-### Updated ENV vars per service
+Each service's Helm chart lives in `<service-dir>/chart/`. The chart's `deployment.yaml`
+loads all env vars from a ConfigMap (`appEnv` values map) plus optional Secrets for client secrets.
 
-| Service | New ENV Vars |
+### ENV vars per service (actual names used in Helm values files)
+
+| Service | ENV vars in `helm/dev/*.yaml` |
 |---|---|
-| api-gateway | `KEYCLOAK_JWKS_URI`, `KEYCLOAK_ISSUER_URI` |
-| experience-service | `KEYCLOAK_BASE_URL`, `KEYCLOAK_TOKEN_URI`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET` |
-| checkout-service | `KEYCLOAK_BASE_URL`, `KEYCLOAK_TOKEN_URI`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET` |
-| catalog, cart, order | `KEYCLOAK_JWKS_URI` |
+| api-gateway | `KEYCLOAK_HOST`, `KEYCLOAK_PORT`, `SPRING_PROFILES_ACTIVE` |
+| experience-service | `KEYCLOAK_HOST`, `KEYCLOAK_PORT`, `RETAIL_EXPERIENCE_KEYCLOAK_CLIENT_ID`, `RETAIL_EXPERIENCE_KEYCLOAK_TOKEN_URI` |
+| checkout-service | `KEYCLOAK_HOST`, `KEYCLOAK_PORT`, `RETAIL_CHECKOUT_KEYCLOAK_CLIENT_ID` |
+| catalog, cart, orders | `KEYCLOAK_HOST`, `KEYCLOAK_PORT` |
+| web-storefront | `VITE_KEYCLOAK_URL`, `VITE_KEYCLOAK_REALM` |
+
+**Client secrets** are in k8s Secrets (`optional: true` so dev works without creating them):
+```yaml
+# experience-service/chart/templates/deployment.yaml (excerpt)
+- name: KEYCLOAK_CLIENT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: experience-secrets
+      key: client-secret
+      optional: true    # ← dev starts without this Secret
+```
+
+In dev, client secret is injected directly via Helm values as a plain env var.
+
+### ENV vars for stage / prod (in `helm/stage/*.yaml` and `helm/prod/*.yaml`)
+
+| Service | ENV vars |
+|---|---|
+| api-gateway | `KEYCLOAK_JWKS_URI` (full URL, no HOST/PORT split) |
+| experience-service | `KEYCLOAK_JWKS_URI`, `RETAIL_EXPERIENCE_KEYCLOAK_TOKEN_URI` |
+| checkout-service | `KEYCLOAK_JWKS_URI`, `RETAIL_CHECKOUT_KEYCLOAK_TOKEN_URI` |
+| catalog, cart, orders | `KEYCLOAK_JWKS_URI` |
 | web-storefront | `VITE_KEYCLOAK_URL`, `VITE_KEYCLOAK_REALM` |
 
 ---
@@ -723,23 +824,37 @@ retailstore-platform/helm/dev/orders.yaml        + exception handler (no extra e
 
 ## 11. Testing Strategy
 
-### Step 1 — Start Keycloak Locally
+### Step 1 — Start Keycloak
 
+**Local (default profile) — standalone Docker:**
 ```bash
-cd retailstore-platform
-docker compose up keycloak -d
-# Wait for health check to pass (~60 seconds first start)
+docker run -d --name keycloak \
+  -p 8180:8180 \
+  -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin \
+  -e KC_HTTP_PORT=8180 -e KC_HOSTNAME_STRICT=false \
+  -v $(pwd)/retailstore-platform/keycloak/realms:/opt/keycloak/data/import \
+  quay.io/keycloak/keycloak:25.0.6 start-dev --import-realm
+```
 
-# Verify realm imported:
+**Dev profile — k3s on EC2 (already installed by `start-dev.sh`):**
+```bash
+export KUBECONFIG=$HOME/.kube/config-dev-k3s
+./retailstore-platform/scripts/port-forward.sh start
+# Keycloak is now reachable at localhost:8180 (port-forwarded from k3s)
+```
+
+**Verify realm imported:**
+```bash
 curl http://localhost:8180/realms/retailstore/.well-known/openid-configuration
 # Should return JSON with authorization_endpoint, token_endpoint, jwks_uri
 ```
 
 ### Step 2 — Create a Test User
 
+**Via Keycloak Admin UI:** `http://localhost:8180/admin` → admin / admin
+
+**Via CLI (local Docker container):**
 ```bash
-# Via Keycloak Admin UI: http://localhost:8180/admin  (admin/admin)
-# Or via CLI:
 docker exec keycloak /opt/keycloak/bin/kcadm.sh config credentials \
   --server http://localhost:8180 --realm master --user admin --password admin
 
@@ -752,6 +867,14 @@ docker exec keycloak /opt/keycloak/bin/kcadm.sh set-password -r retailstore \
 
 docker exec keycloak /opt/keycloak/bin/kcadm.sh add-roles -r retailstore \
   --uusername testuser --rolename CUSTOMER
+```
+
+**Via CLI (k3s pod):**
+```bash
+kubectl exec -it statefulset/keycloak -n retailstore -- \
+  /opt/keycloak/bin/kcadm.sh config credentials \
+  --server http://localhost:8180 --realm master --user admin --password admin
+# Then run the create/set-password/add-roles commands above inside the pod
 ```
 
 ### Step 3 — Get a Token (Direct Grant for testing)
