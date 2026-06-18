@@ -5,6 +5,9 @@ React 18 + Vite + TypeScript + Tailwind CSS storefront.
 **Architecture**: Calls `api-gateway` → `experience-service` for aggregated page data.
 The `X-Client-Channel: WEB` header is sent on every request so the BFF knows to return the full rich response.
 
+**Authentication**: OAuth2 Authorization Code + PKCE via Keycloak. `oidc-client-ts` handles
+the redirect flow, token storage, and silent renewal. See [`documents/authentication.md`](documents/authentication.md).
+
 ## Run locally
 
 ```bash

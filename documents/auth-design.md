@@ -1,8 +1,16 @@
 # Authentication & Authorization — Technical Design
 
-> This document covers the full authentication and authorization architecture for the
-> RetailStore platform: design decisions, code patterns, token shapes, flows, and
-> per-environment implementation differences.
+> **How to use this document:**  
+> This is the platform-level auth reference — concepts, flows, JWT structure, Keycloak realm
+> design, and how all services connect. Read this first to understand the whole picture.  
+> For implementation details inside a specific service, go to that service's doc:
+>
+> | Service | What it covers |
+> |---------|---------------|
+> | [`api-gateway/documents/authentication.md`](../api-gateway/documents/authentication.md) | `GlobalJwtFilter` steps, JWKS wiring per env, public paths, troubleshooting |
+> | [`web-storefront/documents/authentication.md`](../web-storefront/documents/authentication.md) | PKCE flow, `oidc-client-ts` setup, silent renewal, env config, testing |
+> | `experience-service/documents/authentication.md` *(TODO)* | Client Credentials token fetch, `ServiceTokenProvider` |
+> | `checkout-service/documents/authentication.md` *(TODO)* | Client Credentials for order-service call |
 
 ---
 
