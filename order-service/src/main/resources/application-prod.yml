@@ -1,0 +1,59 @@
+# Prod profile — RDS MySQL Multi-AZ + AWS SQS + EKS Keycloak.
+# Swagger disabled. Health details hidden.
+
+spring:
+  datasource:
+    url: jdbc:mysql://${RDS_ENDPOINT}:${RDS_PORT:3306}/ordersdb?useSSL=true&requireSSL=true&serverTimezone=UTC
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${RDS_USER}
+    password: ${RDS_PASSWORD}
+    hikari:
+      minimum-idle: 10
+      maximum-pool-size: 30
+      connection-timeout: 20000
+      idle-timeout: 300000
+      max-lifetime: 1200000
+      leak-detection-threshold: 60000
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+  flyway:
+    enabled: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI}
+
+retail:
+  order:
+    messaging:
+      enabled: true
+      sqs:
+        queue-url: ${RETAIL_ORDER_MESSAGING_SQS_QUEUE_URL}
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+management:
+  tracing:
+    sampling:
+      probability: 0.05
+  zipkin:
+    tracing:
+      endpoint: ${TRACING_ENDPOINT}
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    com.retailstore: WARN
+    org.hibernate.SQL: ERROR

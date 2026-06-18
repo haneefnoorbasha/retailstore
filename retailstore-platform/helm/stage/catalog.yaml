@@ -1,0 +1,30 @@
+image:
+  repository: ""  # Replace: ECR repo URI
+  tag: "latest"
+replicaCount: 2
+appEnv:
+  SPRING_PROFILES_ACTIVE: "stage"
+  # Replace: RDS MySQL endpoint (e.g. stage-catalog.xxxxxx.us-east-1.rds.amazonaws.com)
+  RDS_ENDPOINT: ""
+  RDS_PORT: "3306"
+  RDS_USER: "catalog_user"
+  # RDS_PASSWORD: injected from Kubernetes Secret (do not put passwords in values files)
+  # Replace: ElastiCache primary endpoint
+  REDIS_HOST: ""
+  REDIS_PORT: "6379"
+  RETAIL_CATALOG_PERSISTENCE_PROVIDER: "jpa"
+  # Replace: Keycloak JWKS URI on EKS
+  KEYCLOAK_JWKS_URI: ""
+  # Replace: tracing backend endpoint
+  TRACING_ENDPOINT: "https://zipkin.internal.retailstore.com/api/v2/spans"
+resources:
+  limits:
+    memory: 768Mi
+  requests:
+    cpu: 200m
+    memory: 384Mi
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70

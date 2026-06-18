@@ -1,0 +1,71 @@
+# Stage profile — AWS EKS deployment, minimal HA configuration.
+# All ${...} variables must be injected via Kubernetes Secrets / AWS Parameter Store.
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Replace: Keycloak JWKS endpoint on EKS (e.g. https://auth.internal.retailstore.com/realms/retailstore/protocol/openid-connect/certs)
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI}
+  data:
+    redis:
+      # Replace: ElastiCache Redis primary endpoint (e.g. stage-redis.xxxxxx.ng.0001.use1.cache.amazonaws.com)
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+      ssl:
+        enabled: true
+      timeout: 2000ms
+
+  cloud:
+    gateway:
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowed-origins:
+              # Replace: stage CloudFront / ALB frontend URL
+              - "${ALLOWED_ORIGIN}"
+
+management:
+  tracing:
+    sampling:
+      probability: 0.1
+  zipkin:
+    tracing:
+      # Replace: tracing backend endpoint (Zipkin-compatible, or OTEL collector in Zipkin mode)
+      endpoint: ${TRACING_ENDPOINT:https://zipkin.internal.retailstore.com/api/v2/spans}
+  endpoint:
+    health:
+      show-details: when-authorized
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      experience-cb:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 5
+      catalog-cb:
+        sliding-window-size: 30
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 5
+      cart-cb:
+        sliding-window-size: 20
+        failure-rate-threshold: 60
+        wait-duration-in-open-state: 10s
+      checkout-cb:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+      order-cb:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 15s
+
+logging:
+  level:
+    com.retailstore: INFO
+    org.springframework.cloud.gateway: WARN
+    reactor.netty: WARN

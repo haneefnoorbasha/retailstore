@@ -1,0 +1,33 @@
+image:
+  repository: ""  # Replace: ECR repo URI
+  tag: "latest"
+replicaCount: 3
+appEnv:
+  SPRING_PROFILES_ACTIVE: "prod"
+  # Replace: ElastiCache prod primary endpoint
+  REDIS_HOST: ""
+  REDIS_PORT: "6379"
+  RETAIL_CHECKOUT_ENDPOINTS_ORDERS: "http://orders.retailstore.svc.cluster.local:8080"
+  RETAIL_CHECKOUT_SESSION_TTL_MINUTES: "30"
+  RETAIL_CHECKOUT_TAX_RATE: "0.20"
+  RETAIL_CHECKOUT_SHIPPING_COST: "5.99"
+  RETAIL_CHECKOUT_FREE_SHIPPING_THRESHOLD: "50.00"
+  # Replace: Keycloak JWKS URI (prod Keycloak cluster)
+  KEYCLOAK_JWKS_URI: ""
+  # Replace: Keycloak token URI (prod Keycloak cluster)
+  KEYCLOAK_TOKEN_URI: ""
+  KEYCLOAK_CLIENT_ID: "checkout-service"
+  # KEYCLOAK_CLIENT_SECRET: injected from Kubernetes Secret
+  # Replace: prod tracing backend endpoint
+  TRACING_ENDPOINT: ""
+resources:
+  limits:
+    memory: 768Mi
+  requests:
+    cpu: 300m
+    memory: 384Mi
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 65

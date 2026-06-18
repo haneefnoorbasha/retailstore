@@ -1,0 +1,31 @@
+image:
+  repository: ""  # Replace: ECR repo URI
+  tag: "latest"
+replicaCount: 3
+appEnv:
+  SPRING_PROFILES_ACTIVE: "prod"
+  RETAIL_GATEWAY_ROUTES_EXPERIENCE: "http://experience.retailstore.svc.cluster.local:8080"
+  RETAIL_GATEWAY_ROUTES_CATALOG: "http://catalog.retailstore.svc.cluster.local:8080"
+  RETAIL_GATEWAY_ROUTES_CARTS: "http://carts.retailstore.svc.cluster.local:8080"
+  RETAIL_GATEWAY_ROUTES_ORDERS: "http://orders.retailstore.svc.cluster.local:8080"
+  RETAIL_GATEWAY_ROUTES_CHECKOUT: "http://checkout.retailstore.svc.cluster.local:8080"
+  # Replace: Keycloak JWKS URI (prod Keycloak cluster)
+  KEYCLOAK_JWKS_URI: ""
+  # Replace: ElastiCache prod primary endpoint
+  REDIS_HOST: ""
+  REDIS_PORT: "6379"
+  # Replace: prod frontend CloudFront URL
+  ALLOWED_ORIGIN: "https://www.retailstore.com"
+  # Replace: prod tracing backend endpoint
+  TRACING_ENDPOINT: ""
+resources:
+  limits:
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 65

@@ -1,0 +1,24 @@
+# Bitnami Redis chart values for k3s dev
+# helm install redis bitnami/redis -n retailstore -f helm/infra/redis-values.yaml
+# Service created: redis-master (used by catalog, checkout, gateway)
+
+architecture: standalone
+
+auth:
+  enabled: false    # No auth in dev
+
+master:
+  persistence:
+    size: 1Gi
+  resources:
+    limits:
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+replica:
+  replicaCount: 0   # No replicas in dev
+
+metrics:
+  enabled: false

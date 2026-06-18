@@ -1,0 +1,44 @@
+server:
+  port: 8080
+  shutdown: graceful
+spring:
+  application:
+    name: experience-service
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI:http://localhost:8180/realms/retailstore/protocol/openid-connect/certs}
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  main:
+    web-application-type: reactive
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+logging:
+  level:
+    com.retailstore: INFO
+    reactor.netty: WARN
+retail:
+  experience:
+    endpoints:
+      catalog: ${RETAIL_EXPERIENCE_ENDPOINTS_CATALOG:http://catalog}
+      carts:   ${RETAIL_EXPERIENCE_ENDPOINTS_CARTS:http://carts}
+      orders:  ${RETAIL_EXPERIENCE_ENDPOINTS_ORDERS:http://orders}
+    keycloak:
+      token-uri:     ${KEYCLOAK_TOKEN_URI:http://localhost:8180/realms/retailstore/protocol/openid-connect/token}
+      client-id:     ${KEYCLOAK_CLIENT_ID:experience-service}
+      client-secret: ${KEYCLOAK_CLIENT_SECRET:exp-service-secret}

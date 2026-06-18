@@ -1,0 +1,31 @@
+image:
+  repository: ""  # Replace: ECR repo URI (e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/retailstore/api-gateway)
+  tag: "latest"
+replicaCount: 2
+appEnv:
+  SPRING_PROFILES_ACTIVE: "stage"
+  RETAIL_GATEWAY_ROUTES_EXPERIENCE: "http://experience.retailstore.svc.cluster.local:8080"
+  RETAIL_GATEWAY_ROUTES_CATALOG: "http://catalog.retailstore.svc.cluster.local:8080"
+  RETAIL_GATEWAY_ROUTES_CARTS: "http://carts.retailstore.svc.cluster.local:8080"
+  RETAIL_GATEWAY_ROUTES_ORDERS: "http://orders.retailstore.svc.cluster.local:8080"
+  RETAIL_GATEWAY_ROUTES_CHECKOUT: "http://checkout.retailstore.svc.cluster.local:8080"
+  # Replace: Keycloak JWKS URI on EKS (e.g. https://auth.internal.retailstore.com/realms/retailstore/protocol/openid-connect/certs)
+  KEYCLOAK_JWKS_URI: ""
+  # Replace: ElastiCache primary endpoint
+  REDIS_HOST: ""
+  REDIS_PORT: "6379"
+  # Replace: stage frontend CloudFront or ALB URL
+  ALLOWED_ORIGIN: "https://stage.retailstore.com"
+  # Replace: tracing backend endpoint
+  TRACING_ENDPOINT: "https://zipkin.internal.retailstore.com/api/v2/spans"
+resources:
+  limits:
+    memory: 512Mi
+  requests:
+    cpu: 200m
+    memory: 256Mi
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70

@@ -1,0 +1,130 @@
+{
+  "realm": "retailstore",
+  "enabled": true,
+  "displayName": "RetailStore",
+  "displayNameHtml": "<b>RetailStore</b>",
+  "registrationAllowed": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "failureFactor": 10,
+
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "refreshTokenMaxReuse": 0,
+  "revokeRefreshToken": true,
+
+  "roles": {
+    "realm": [
+      { "name": "CUSTOMER",     "description": "Standard customer account" },
+      { "name": "ADMIN",        "description": "Platform administrator" },
+      { "name": "SUPPORT",      "description": "Support team member" },
+      { "name": "service-role", "description": "Internal service account — M2S calls only" }
+    ]
+  },
+
+  "defaultRoles": ["CUSTOMER"],
+
+  "clients": [
+    {
+      "clientId": "web-storefront",
+      "name": "RetailStore Web Frontend",
+      "description": "React SPA — Authorization Code + PKCE",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "https://shop.retailstore.com/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "https://shop.retailstore.com"
+      ],
+      "defaultClientScopes":  ["openid", "profile", "email", "roles"],
+      "optionalClientScopes": ["address", "phone"]
+    },
+
+    {
+      "clientId": "experience-service",
+      "name": "Experience Service",
+      "description": "BFF — Client Credentials for downstream M2S calls",
+      "enabled": true,
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "secret": "exp-service-secret",
+      "defaultClientScopes":  ["roles"],
+      "optionalClientScopes": []
+    },
+
+    {
+      "clientId": "checkout-service",
+      "name": "Checkout Service",
+      "description": "Checkout — Client Credentials to call order-service",
+      "enabled": true,
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "secret": "checkout-service-secret",
+      "defaultClientScopes":  ["roles"],
+      "optionalClientScopes": []
+    }
+  ],
+
+  "clientScopeMappings": {
+    "experience-service": [
+      { "client": "experience-service", "roles": ["service-role"] }
+    ],
+    "checkout-service": [
+      { "client": "checkout-service",   "roles": ["service-role"] }
+    ]
+  },
+
+  "users": [
+    {
+      "username": "admin@retailstore.com",
+      "email":    "admin@retailstore.com",
+      "firstName": "Platform",
+      "lastName":  "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        { "type": "password", "value": "Admin@1234", "temporary": false }
+      ],
+      "realmRoles": ["ADMIN"]
+    },
+    {
+      "username": "customer@example.com",
+      "email":    "customer@example.com",
+      "firstName": "Test",
+      "lastName":  "Customer",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        { "type": "password", "value": "Customer@1234", "temporary": false }
+      ],
+      "realmRoles": ["CUSTOMER"]
+    }
+  ],
+
+  "smtpServer": {},
+
+  "internationalizationEnabled": false,
+  "supportedLocales": ["en"],
+  "defaultLocale": "en"
+}

@@ -1,0 +1,36 @@
+# Prod profile — AWS DynamoDB (Global Tables for HA) + EKS Keycloak.
+# Swagger disabled. Health details hidden.
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI}
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+management:
+  tracing:
+    sampling:
+      probability: 0.05
+  zipkin:
+    tracing:
+      endpoint: ${TRACING_ENDPOINT}
+  endpoint:
+    health:
+      show-details: never
+
+retail:
+  cart:
+    dynamodb:
+      endpoint: ""
+      table-name: ${RETAIL_CART_DYNAMODB_TABLE_NAME:Carts}
+
+logging:
+  level:
+    com.retailstore: WARN

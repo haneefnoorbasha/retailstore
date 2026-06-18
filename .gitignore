@@ -1,0 +1,60 @@
+# Java / Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.iml
+.mvn/wrapper/maven-wrapper.jar
+
+# Spring Boot
+*.log
+/logs/
+
+# IDE
+.idea/
+.vscode/
+*.iws
+*.ipr
+*.iml
+out/
+
+# Node / React
+node_modules/
+dist/
+.next/
+web-storefront/.env
+web-storefront/.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets / credentials — NEVER commit these
+*.pem
+*.key
+*.p12
+*.jks
+.env
+.env.*
+!.env.example
+retailstore-platform/scripts/*.sh.bak
+
+# Terraform state
+retailstore-platform/terraform/.terraform/
+retailstore-platform/terraform/*.tfstate
+retailstore-platform/terraform/*.tfstate.backup
+retailstore-platform/terraform/.terraform.lock.hcl
+
+# Docker
+retailstore-platform/mysql/data/
+
+# k3s local kubeconfig
+*.kubeconfig
+config-dev-k3s
+
+# Build artifacts
+retailstore-platform/build/
+
+# Claude Code local settings
+.claude/

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: order-service
+description: RetailStore — Order domain microservice
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+maintainers:
+  - name: RetailStore Platform Team
+keywords: [retailstore, orders, order-management, ecommerce]

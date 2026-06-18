@@ -1,0 +1,30 @@
+image:
+  repository: ""  # Replace: ECR repo URI
+  tag: "latest"
+replicaCount: 3
+appEnv:
+  SPRING_PROFILES_ACTIVE: "prod"
+  # Replace: RDS MySQL Multi-AZ endpoint
+  RDS_ENDPOINT: ""
+  RDS_PORT: "3306"
+  RDS_USER: "catalog_user"
+  # RDS_PASSWORD: injected from Kubernetes Secret
+  # Replace: ElastiCache prod primary endpoint
+  REDIS_HOST: ""
+  REDIS_PORT: "6379"
+  RETAIL_CATALOG_PERSISTENCE_PROVIDER: "jpa"
+  # Replace: Keycloak JWKS URI (prod Keycloak cluster)
+  KEYCLOAK_JWKS_URI: ""
+  # Replace: prod tracing backend endpoint
+  TRACING_ENDPOINT: ""
+resources:
+  limits:
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 65

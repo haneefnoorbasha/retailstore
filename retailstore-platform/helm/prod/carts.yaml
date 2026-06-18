@@ -1,0 +1,24 @@
+image:
+  repository: ""  # Replace: ECR repo URI
+  tag: "latest"
+replicaCount: 3
+appEnv:
+  SPRING_PROFILES_ACTIVE: "prod"
+  RETAIL_CART_DYNAMODB_TABLE_NAME: "Carts"
+  RETAIL_CART_DYNAMODB_ENDPOINT: ""  # Empty = AWS SDK default (IRSA role)
+  AWS_REGION: "us-east-1"
+  # Replace: Keycloak JWKS URI (prod Keycloak cluster)
+  KEYCLOAK_JWKS_URI: ""
+  # Replace: prod tracing backend endpoint
+  TRACING_ENDPOINT: ""
+resources:
+  limits:
+    memory: 768Mi
+  requests:
+    cpu: 300m
+    memory: 384Mi
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 65

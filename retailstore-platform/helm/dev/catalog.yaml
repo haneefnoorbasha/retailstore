@@ -1,0 +1,24 @@
+image:
+  repository: ""
+  tag: "latest"
+replicaCount: 1
+appEnv:
+  SPRING_PROFILES_ACTIVE: "dev"
+  MYSQL_HOST: "mysql"
+  MYSQL_PORT: "3306"
+  MYSQL_USER: "catalog_user"
+  MYSQL_PASSWORD: "catalog_pass"
+  REDIS_HOST: "redis-master"
+  REDIS_PORT: "6379"
+  RETAIL_CATALOG_PERSISTENCE_PROVIDER: "jpa"
+  KEYCLOAK_HOST: "keycloak"
+  KEYCLOAK_PORT: "8180"
+  ZIPKIN_HOST: "zipkin"
+resources:
+  limits:
+    memory: 512Mi
+  requests:
+    cpu: 200m
+    memory: 256Mi
+autoscaling:
+  enabled: false

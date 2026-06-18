@@ -1,0 +1,50 @@
+# Stage profile — ElastiCache Redis + EKS Keycloak.
+# All ${...} variables must be injected via Kubernetes Secrets / AWS Parameter Store.
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Replace: Keycloak JWKS URI on EKS
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI}
+  data:
+    redis:
+      # Replace: ElastiCache primary endpoint
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+      ssl:
+        enabled: true
+      timeout: 2000ms
+      lettuce:
+        pool:
+          min-idle: 2
+          max-idle: 10
+          max-active: 20
+
+retail:
+  checkout:
+    keycloak:
+      # Replace: Keycloak token URI on EKS
+      token-uri: ${KEYCLOAK_TOKEN_URI}
+      client-id: ${KEYCLOAK_CLIENT_ID:checkout-service}
+      client-secret: ${KEYCLOAK_CLIENT_SECRET}
+    endpoints:
+      # Replace: order-service internal EKS service DNS
+      orders: ${RETAIL_CHECKOUT_ENDPOINTS_ORDERS}
+
+management:
+  tracing:
+    sampling:
+      probability: 0.1
+  zipkin:
+    tracing:
+      # Replace: tracing backend endpoint
+      endpoint: ${TRACING_ENDPOINT:https://zipkin.internal.retailstore.com/api/v2/spans}
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    com.retailstore: INFO

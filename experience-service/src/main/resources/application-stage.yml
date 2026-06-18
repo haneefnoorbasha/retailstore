@@ -1,0 +1,40 @@
+# Stage profile — EKS service mesh for downstream calls + EKS Keycloak.
+# All ${...} variables must be injected via Kubernetes Secrets / AWS Parameter Store.
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Replace: Keycloak JWKS URI on EKS
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI}
+
+retail:
+  experience:
+    keycloak:
+      # Replace: Keycloak token URI on EKS
+      token-uri: ${KEYCLOAK_TOKEN_URI}
+      client-id: ${KEYCLOAK_CLIENT_ID:experience-service}
+      client-secret: ${KEYCLOAK_CLIENT_SECRET}
+    endpoints:
+      # Replace: EKS internal service DNS names (e.g. http://catalog.retailstore.svc.cluster.local)
+      catalog: ${RETAIL_EXPERIENCE_ENDPOINTS_CATALOG}
+      carts:   ${RETAIL_EXPERIENCE_ENDPOINTS_CARTS}
+      orders:  ${RETAIL_EXPERIENCE_ENDPOINTS_ORDERS}
+
+management:
+  tracing:
+    sampling:
+      probability: 0.1
+  zipkin:
+    tracing:
+      # Replace: tracing backend endpoint
+      endpoint: ${TRACING_ENDPOINT:https://zipkin.internal.retailstore.com/api/v2/spans}
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    com.retailstore: INFO
+    reactor.netty: WARN

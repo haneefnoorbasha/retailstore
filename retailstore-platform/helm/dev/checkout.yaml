@@ -1,0 +1,26 @@
+image:
+  repository: ""
+  tag: "latest"
+replicaCount: 1
+appEnv:
+  SPRING_PROFILES_ACTIVE: "dev"
+  REDIS_HOST: "redis-master"
+  REDIS_PORT: "6379"
+  RETAIL_CHECKOUT_ENDPOINTS_ORDERS: "http://orders:8080"
+  RETAIL_CHECKOUT_SESSION_TTL_MINUTES: "30"
+  RETAIL_CHECKOUT_TAX_RATE: "0.20"
+  RETAIL_CHECKOUT_SHIPPING_COST: "5.99"
+  RETAIL_CHECKOUT_FREE_SHIPPING_THRESHOLD: "50.00"
+  KEYCLOAK_HOST: "keycloak"
+  KEYCLOAK_PORT: "8180"
+  KEYCLOAK_CLIENT_ID: "checkout-service"
+  KEYCLOAK_CLIENT_SECRET: "checkout-service-secret"
+  ZIPKIN_HOST: "zipkin"
+resources:
+  limits:
+    memory: 512Mi
+  requests:
+    cpu: 150m
+    memory: 256Mi
+autoscaling:
+  enabled: false

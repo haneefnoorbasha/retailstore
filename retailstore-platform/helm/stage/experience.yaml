@@ -1,0 +1,28 @@
+image:
+  repository: ""  # Replace: ECR repo URI
+  tag: "latest"
+replicaCount: 2
+appEnv:
+  SPRING_PROFILES_ACTIVE: "stage"
+  RETAIL_EXPERIENCE_ENDPOINTS_CATALOG: "http://catalog.retailstore.svc.cluster.local:8080"
+  RETAIL_EXPERIENCE_ENDPOINTS_CARTS: "http://carts.retailstore.svc.cluster.local:8080"
+  RETAIL_EXPERIENCE_ENDPOINTS_ORDERS: "http://orders.retailstore.svc.cluster.local:8080"
+  # Replace: Keycloak JWKS URI on EKS
+  KEYCLOAK_JWKS_URI: ""
+  # Replace: Keycloak token URI on EKS
+  KEYCLOAK_TOKEN_URI: ""
+  KEYCLOAK_CLIENT_ID: "experience-service"
+  # KEYCLOAK_CLIENT_SECRET: injected from Kubernetes Secret
+  # Replace: tracing backend endpoint
+  TRACING_ENDPOINT: "https://zipkin.internal.retailstore.com/api/v2/spans"
+resources:
+  limits:
+    memory: 512Mi
+  requests:
+    cpu: 200m
+    memory: 256Mi
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70

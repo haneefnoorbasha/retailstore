@@ -1,0 +1,9 @@
+apiVersion: v2
+name: experience-service
+description: RetailStore — Experience BFF layer
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+maintainers:
+  - name: RetailStore Platform Team
+keywords: [retailstore, experience, bff, ecommerce]

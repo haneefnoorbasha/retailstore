@@ -1,0 +1,55 @@
+server:
+  port: 8080
+  shutdown: graceful
+spring:
+  application:
+    name: checkout-service
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI:http://localhost:8180/realms/retailstore/protocol/openid-connect/certs}
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          min-idle: 2
+          max-idle: 8
+          max-active: 16
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+logging:
+  level:
+    com.retailstore: INFO
+retail:
+  checkout:
+    keycloak:
+      token-uri:     ${KEYCLOAK_TOKEN_URI:http://localhost:8180/realms/retailstore/protocol/openid-connect/token}
+      client-id:     ${KEYCLOAK_CLIENT_ID:checkout-service}
+      client-secret: ${KEYCLOAK_CLIENT_SECRET:checkout-service-secret}
+    session:
+      ttl-minutes: ${RETAIL_CHECKOUT_SESSION_TTL_MINUTES:30}
+    pricing:
+      tax-rate: ${RETAIL_CHECKOUT_TAX_RATE:0.20}
+      shipping-cost: ${RETAIL_CHECKOUT_SHIPPING_COST:5.99}
+      free-shipping-threshold: ${RETAIL_CHECKOUT_FREE_SHIPPING_THRESHOLD:50.00}
+    endpoints:
+      orders: ${RETAIL_CHECKOUT_ENDPOINTS_ORDERS:http://orders}

@@ -1,0 +1,30 @@
+# Dev profile — Redis in Docker Compose; IntelliJ uses localhost defaults.
+# Docker Compose injects: REDIS_HOST=redis, KEYCLOAK_HOST=keycloak, KEYCLOAK_TOKEN_URI=http://keycloak:8180/...
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}/realms/retailstore/protocol/openid-connect/certs
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+retail:
+  checkout:
+    keycloak:
+      token-uri: http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}/realms/retailstore/protocol/openid-connect/token
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://${ZIPKIN_HOST:localhost}:9411/api/v2/spans
+
+logging:
+  level:
+    com.retailstore: DEBUG

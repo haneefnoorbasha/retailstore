@@ -1,0 +1,51 @@
+# Prod profile — ElastiCache Redis cluster + EKS Keycloak.
+# Swagger disabled. Health details hidden.
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI}
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+      ssl:
+        enabled: true
+      timeout: 1500ms
+      lettuce:
+        pool:
+          min-idle: 5
+          max-idle: 20
+          max-active: 50
+
+retail:
+  checkout:
+    keycloak:
+      token-uri: ${KEYCLOAK_TOKEN_URI}
+      client-id: ${KEYCLOAK_CLIENT_ID:checkout-service}
+      client-secret: ${KEYCLOAK_CLIENT_SECRET}
+    endpoints:
+      orders: ${RETAIL_CHECKOUT_ENDPOINTS_ORDERS}
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+management:
+  tracing:
+    sampling:
+      probability: 0.05
+  zipkin:
+    tracing:
+      endpoint: ${TRACING_ENDPOINT}
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    com.retailstore: WARN

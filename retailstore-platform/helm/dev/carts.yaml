@@ -1,0 +1,22 @@
+image:
+  repository: ""
+  tag: "latest"
+replicaCount: 1
+appEnv:
+  SPRING_PROFILES_ACTIVE: "dev"
+  RETAIL_CART_DYNAMODB_TABLE_NAME: "Carts"
+  RETAIL_CART_DYNAMODB_ENDPOINT: "http://dynamodb-local:8000"
+  AWS_ACCESS_KEY_ID: "dummy"
+  AWS_SECRET_ACCESS_KEY: "dummy"
+  AWS_REGION: "us-east-1"
+  KEYCLOAK_HOST: "keycloak"
+  KEYCLOAK_PORT: "8180"
+  ZIPKIN_HOST: "zipkin"
+resources:
+  limits:
+    memory: 512Mi
+  requests:
+    cpu: 150m
+    memory: 256Mi
+autoscaling:
+  enabled: false

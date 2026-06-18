@@ -1,0 +1,152 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: api-gateway
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI:http://localhost:8180/realms/retailstore/protocol/openid-connect/certs}
+          issuer-uri:  ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/retailstore}
+  cloud:
+    gateway:
+      # Global CORS — web-storefront needs this
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowed-origins:
+              - "http://localhost:3000"
+              - "${ALLOWED_ORIGIN:https://shop.retailstore.com}"
+            allowed-methods: [GET, POST, PUT, DELETE, PATCH, OPTIONS]
+            allowed-headers: ["*"]
+            exposed-headers: [X-Correlation-Id, X-Request-Id]
+            allow-credentials: true
+            max-age: 3600
+
+      routes:
+        # ── Experience layer (BFF) ──
+        - id: experience-service
+          uri: ${RETAIL_GATEWAY_ROUTES_EXPERIENCE:http://experience}
+          predicates:
+            - Path=/api/v1/experience/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: experience-cb
+                fallbackUri: forward:/fallback/experience
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 100
+                redis-rate-limiter.burstCapacity: 200
+                key-resolver: "#{@ipKeyResolver}"
+
+        # ── Catalog service ──
+        - id: catalog-service
+          uri: ${RETAIL_GATEWAY_ROUTES_CATALOG:http://catalog}
+          predicates:
+            - Path=/api/v1/catalog/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: catalog-cb
+                fallbackUri: forward:/fallback/catalog
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 200
+                redis-rate-limiter.burstCapacity: 400
+                key-resolver: "#{@ipKeyResolver}"
+
+        # ── Cart service ──
+        - id: cart-service
+          uri: ${RETAIL_GATEWAY_ROUTES_CARTS:http://carts}
+          predicates:
+            - Path=/api/v1/carts/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: cart-cb
+                fallbackUri: forward:/fallback/cart
+
+        # ── Checkout service ──
+        - id: checkout-service
+          uri: ${RETAIL_GATEWAY_ROUTES_CHECKOUT:http://checkout}
+          predicates:
+            - Path=/api/v1/checkout/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: checkout-cb
+                fallbackUri: forward:/fallback/checkout
+
+        # ── Order service ──
+        - id: order-service
+          uri: ${RETAIL_GATEWAY_ROUTES_ORDERS:http://orders}
+          predicates:
+            - Path=/api/v1/orders/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: order-cb
+                fallbackUri: forward:/fallback/order
+
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+        - AddResponseHeader=X-Content-Type-Options, nosniff
+        - AddResponseHeader=X-Frame-Options, DENY
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,gateway
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+    gateway:
+      enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      experience-cb:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+      catalog-cb:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+      cart-cb:
+        sliding-window-size: 10
+        failure-rate-threshold: 60
+        wait-duration-in-open-state: 10s
+      checkout-cb:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+      order-cb:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 15s
+
+logging:
+  level:
+    com.retailstore: INFO
+    org.springframework.cloud.gateway: WARN
+    reactor.netty: WARN

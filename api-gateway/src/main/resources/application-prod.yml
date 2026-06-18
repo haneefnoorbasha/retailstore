@@ -1,0 +1,75 @@
+# Prod profile — AWS EKS, full HA. Tighter circuit breakers, lower sampling, Swagger off.
+# All ${...} variables must be injected via Kubernetes Secrets / AWS Parameter Store.
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI}
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+      ssl:
+        enabled: true
+      timeout: 1500ms
+
+  cloud:
+    gateway:
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowed-origins:
+              - "${ALLOWED_ORIGIN}"
+
+management:
+  tracing:
+    sampling:
+      probability: 0.05
+  zipkin:
+    tracing:
+      endpoint: ${TRACING_ENDPOINT}
+  endpoint:
+    health:
+      show-details: never
+
+# Tighter Resilience4j for production — fail fast, recover quickly
+resilience4j:
+  circuitbreaker:
+    instances:
+      experience-cb:
+        sliding-window-size: 20
+        failure-rate-threshold: 40
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 3
+        slow-call-rate-threshold: 80
+        slow-call-duration-threshold: 3s
+      catalog-cb:
+        sliding-window-size: 30
+        failure-rate-threshold: 40
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 5
+        slow-call-rate-threshold: 80
+        slow-call-duration-threshold: 2s
+      cart-cb:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 3
+      checkout-cb:
+        sliding-window-size: 20
+        failure-rate-threshold: 40
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 3
+      order-cb:
+        sliding-window-size: 20
+        failure-rate-threshold: 40
+        wait-duration-in-open-state: 20s
+        permitted-number-of-calls-in-half-open-state: 3
+
+logging:
+  level:
+    com.retailstore: WARN
+    org.springframework.cloud.gateway: WARN
+    reactor.netty: ERROR

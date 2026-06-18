@@ -1,0 +1,28 @@
+# Dev profile — infra runs in Docker Compose.
+# IntelliJ: set SPRING_PROFILES_ACTIVE=dev; all ${VAR:localhost} defaults connect via Docker port mappings.
+# Docker Compose: injects KEYCLOAK_HOST=keycloak, REDIS_HOST=redis, ZIPKIN_HOST=zipkin, etc.
+#
+# Gateway route URIs (RETAIL_GATEWAY_ROUTES_*) must be set explicitly:
+#   IntelliJ run config  : RETAIL_GATEWAY_ROUTES_CATALOG=http://localhost:8081, etc.
+#   Docker Compose       : already injects http://catalog:8080, etc.
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}/realms/retailstore/protocol/openid-connect/certs
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://${ZIPKIN_HOST:localhost}:9411/api/v2/spans
+
+logging:
+  level:
+    com.retailstore: DEBUG
+    org.springframework.cloud.gateway: DEBUG
+    reactor.netty: INFO

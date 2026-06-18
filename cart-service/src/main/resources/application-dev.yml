@@ -1,0 +1,26 @@
+# Dev profile — DynamoDB Local in Docker Compose; IntelliJ uses localhost defaults.
+# Docker Compose injects: RETAIL_CART_DYNAMODB_ENDPOINT=http://dynamodb-local:8000, KEYCLOAK_HOST=keycloak
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}/realms/retailstore/protocol/openid-connect/certs
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://${ZIPKIN_HOST:localhost}:9411/api/v2/spans
+
+retail:
+  cart:
+    dynamodb:
+      endpoint: ${RETAIL_CART_DYNAMODB_ENDPOINT:http://localhost:8000}
+
+logging:
+  level:
+    com.retailstore: DEBUG

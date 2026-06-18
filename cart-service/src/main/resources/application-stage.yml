@@ -1,0 +1,33 @@
+# Stage profile — AWS DynamoDB + EKS Keycloak.
+# All ${...} variables must be injected via Kubernetes Secrets / AWS Parameter Store.
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Replace: Keycloak JWKS URI on EKS
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI}
+
+management:
+  tracing:
+    sampling:
+      probability: 0.1
+  zipkin:
+    tracing:
+      # Replace: tracing backend endpoint
+      endpoint: ${TRACING_ENDPOINT:https://zipkin.internal.retailstore.com/api/v2/spans}
+  endpoint:
+    health:
+      show-details: when-authorized
+
+retail:
+  cart:
+    dynamodb:
+      # No endpoint override — uses AWS SDK default resolution (IAM role on EKS node/pod)
+      endpoint: ""
+      table-name: ${RETAIL_CART_DYNAMODB_TABLE_NAME:Carts}
+
+logging:
+  level:
+    com.retailstore: INFO

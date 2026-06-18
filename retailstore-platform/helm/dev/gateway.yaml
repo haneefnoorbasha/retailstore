@@ -1,0 +1,25 @@
+image:
+  repository: ""   # Set via --set image.repository=<ECR_URI>/retailstore/gateway
+  tag: "latest"    # Set via --set image.tag=<GIT_SHA>
+replicaCount: 1
+appEnv:
+  SPRING_PROFILES_ACTIVE: "dev"
+  RETAIL_GATEWAY_ROUTES_EXPERIENCE: "http://experience:8080"
+  RETAIL_GATEWAY_ROUTES_CATALOG: "http://catalog:8080"
+  RETAIL_GATEWAY_ROUTES_CARTS: "http://carts:8080"
+  RETAIL_GATEWAY_ROUTES_ORDERS: "http://orders:8080"
+  RETAIL_GATEWAY_ROUTES_CHECKOUT: "http://checkout:8080"
+  KEYCLOAK_HOST: "keycloak"
+  KEYCLOAK_PORT: "8180"
+  REDIS_HOST: "redis-master"
+  REDIS_PORT: "6379"
+  ALLOWED_ORIGIN: "http://localhost:3000"
+  ZIPKIN_HOST: "zipkin"
+resources:
+  limits:
+    memory: 768Mi
+  requests:
+    cpu: 200m
+    memory: 384Mi
+autoscaling:
+  enabled: false

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: checkout-service
+description: RetailStore — Checkout domain microservice
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+maintainers:
+  - name: RetailStore Platform Team
+keywords: [retailstore, checkout, payments, ecommerce]

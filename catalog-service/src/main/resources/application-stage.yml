@@ -1,0 +1,64 @@
+# Stage profile — AWS RDS MySQL + ElastiCache Redis + EKS Keycloak.
+# All ${...} variables must be injected via Kubernetes Secrets / AWS Parameter Store.
+
+spring:
+  datasource:
+    # Replace: RDS MySQL endpoint (e.g. stage-catalog.xxxxxx.us-east-1.rds.amazonaws.com)
+    url: jdbc:mysql://${RDS_ENDPOINT}:${RDS_PORT:3306}/catalogdb?useSSL=true&requireSSL=true&serverTimezone=UTC
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${RDS_USER}
+    password: ${RDS_PASSWORD}
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 15
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+        default_batch_fetch_size: 30
+  flyway:
+    enabled: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Replace: Keycloak JWKS URI on EKS
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI}
+  cache:
+    type: redis
+  data:
+    redis:
+      # Replace: ElastiCache primary endpoint
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+      ssl:
+        enabled: true
+      timeout: 2000ms
+
+management:
+  tracing:
+    sampling:
+      probability: 0.1
+  zipkin:
+    tracing:
+      # Replace: tracing backend endpoint
+      endpoint: ${TRACING_ENDPOINT:https://zipkin.internal.retailstore.com/api/v2/spans}
+  endpoint:
+    health:
+      show-details: when-authorized
+
+retail:
+  catalog:
+    persistence:
+      provider: jpa
+
+logging:
+  level:
+    com.retailstore: INFO
+    org.hibernate.SQL: WARN

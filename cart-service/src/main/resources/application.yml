@@ -1,0 +1,37 @@
+server:
+  port: 8080
+  shutdown: graceful
+spring:
+  application:
+    name: cart-service
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI:http://localhost:8180/realms/retailstore/protocol/openid-connect/certs}
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+logging:
+  level:
+    com.retailstore: INFO
+retail:
+  cart:
+    dynamodb:
+      table-name: ${RETAIL_CART_DYNAMODB_TABLE_NAME:Carts}
+      endpoint:   ${RETAIL_CART_DYNAMODB_ENDPOINT:}
+      region:     ${AWS_REGION:us-east-1}

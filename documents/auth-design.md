@@ -1,0 +1,871 @@
+# Authentication & Authorization — Technical Design
+
+> **Read `auth-analysis.md` first.** This document translates the decisions into concrete
+> technical design: exact code patterns, configurations, token shapes, and sequences.
+
+---
+
+## 1. System Architecture (After Refactor)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           EXTERNAL                                           │
+│                                                                              │
+│   Browser (React SPA)                  Keycloak 25                          │
+│        │                               (Identity Provider)                  │
+│        │  1. Redirect to Keycloak       ┌──────────────────┐                │
+│        │─────────────────────────────►  │  /realms/retail  │                │
+│        │                               │  store            │                │
+│        │  2. Login (Keycloak UI)        │                  │                │
+│        │◄─────────────────────────────  │  Endpoints:      │                │
+│        │  3. Authorization Code         │  /auth            │                │
+│        │  4. Code → Token exchange      │  /token           │                │
+│        │─────────────────────────────►  │  /certs (JWKS)   │                │
+│        │◄─────────────────────────────  │  /userinfo        │                │
+│        │  5. access_token (JWT RS256)   │  /logout          │                │
+│        │     id_token                   │                  │                │
+│        │     refresh_token              └──────────────────┘                │
+└────────│──────────────────────────────────────┬──────────────────────────────┘
+         │                                      │ (JWKS fetch on startup + cache)
+         ▼  6. API call (Bearer token)          │
+┌──────────────────────────────────────────────▼──────────────────────────────┐
+│                           INTERNAL (EKS cluster)                             │
+│                                                                              │
+│  api-gateway (Spring Cloud Gateway)                                          │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  GlobalJwtFilter (order: -3)                                          │  │
+│  │  ├── Skip: /api/v1/identity/**, /actuator/**  ← (no identity service  │  │
+│  │  │         now, but keep skip for any public paths)                    │  │
+│  │  ├── Extract Bearer token from Authorization header                   │  │
+│  │  ├── Validate: signature (RS256 via JWKS), expiry, issuer, audience   │  │
+│  │  ├── On failure → 401 Unauthorized (short-circuit)                    │  │
+│  │  └── On success → mutate request:                                     │  │
+│  │       add X-User-Id:    {sub claim}                                   │  │
+│  │       add X-User-Email: {email claim}                                 │  │
+│  │       add X-User-Role:  {realm_access.roles[0]}                       │  │
+│  │       add X-User-Name:  {preferred_username}                          │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│           │                                                                  │
+│           │  Route to downstream with enriched headers                       │
+│           │                                                                  │
+│  ┌────────▼─────────┐   ┌───────────────────────────────────────────────┐   │
+│  │ experience-      │   │  Direct routes (catalog, cart, checkout,       │   │
+│  │ service (BFF)    │   │  orders) — receive X-User-* headers, no        │   │
+│  │                  │   │  re-validation needed                          │   │
+│  │ Calls downstream │   └───────────────────────────────────────────────┘   │
+│  │ with Client      │                                                        │
+│  │ Credentials JWT  │                                                        │
+│  │ (service token)  │                                                        │
+│  └──────────────────┘                                                        │
+│         │                                                                    │
+│         │  Service-to-Service (OAuth2 Client Credentials)                   │
+│         │  Authorization: Bearer <service_access_token>                     │
+│         ▼                                                                    │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐                   │
+│  │ catalog  │  │  cart    │  │ checkout │  │  orders  │                   │
+│  │ :8081    │  │  :8082   │  │  :8083   │  │  :8084   │                   │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘                   │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. Keycloak Realm Design
+
+### Realm: `retailstore`
+
+```
+Realm: retailstore
+│
+├── Clients (OAuth2 applications)
+│   ├── web-storefront                 ← Public client (SPA — no secret)
+│   │   ├── Flow: Authorization Code + PKCE
+│   │   ├── Valid redirect URIs: http://localhost:3000/*, https://shop.retailstore.com/*
+│   │   ├── PKCE: S256 required
+│   │   └── Scopes: openid, profile, email, roles
+│   │
+│   ├── experience-service             ← Confidential client (server-side)
+│   │   ├── Flow: Client Credentials
+│   │   ├── Client secret: (managed via Kubernetes secret)
+│   │   └── Service account roles: service-role
+│   │
+│   ├── checkout-service               ← Confidential client (server-side)
+│   │   ├── Flow: Client Credentials
+│   │   └── Service account roles: service-role
+│   │
+│   └── api-gateway                    ← Resource server (validates tokens only)
+│       └── No flow; just validates tokens issued to other clients
+│
+├── Roles (Realm Roles)
+│   ├── CUSTOMER                       ← Default role for registered users
+│   ├── ADMIN                          ← Admin users
+│   ├── SUPPORT                        ← Support users
+│   └── service-role                   ← Service accounts (M2S)
+│
+└── Users
+    └── (Managed via Keycloak Admin UI or API)
+```
+
+### Token Claims (access_token payload)
+
+```json
+{
+  "sub": "550e8400-e29b-41d4-a716-446655440000",   ← userId
+  "iss": "http://keycloak:8180/realms/retailstore",
+  "aud": ["web-storefront", "account"],
+  "exp": 1735689600,
+  "iat": 1735603200,
+  "email": "user@example.com",
+  "preferred_username": "john.doe",
+  "given_name": "John",
+  "family_name": "Doe",
+  "name": "John Doe",
+  "realm_access": {
+    "roles": ["CUSTOMER", "default-roles-retailstore"]
+  },
+  "email_verified": true
+}
+```
+
+### Service Token Claims (Client Credentials)
+
+```json
+{
+  "sub": "experience-service",              ← clientId
+  "iss": "http://keycloak:8180/realms/retailstore",
+  "aud": "account",
+  "exp": 1735603500,
+  "realm_access": {
+    "roles": ["service-role"]
+  },
+  "azp": "experience-service"
+}
+```
+
+---
+
+## 3. OAuth2 Flows
+
+### Flow 1: Browser Login (Authorization Code + PKCE)
+
+```
+Browser                   Keycloak                  api-gateway
+   │                          │                          │
+   │  1. GET /                │                          │
+   │─────────────────────────────────────────────────►  │
+   │                          │           401 (no token) │
+   │◄────────────────────────────────────────────────── │
+   │                          │                          │
+   │  2. Redirect to Keycloak /auth?                     │
+   │     client_id=web-storefront                        │
+   │     redirect_uri=http://localhost:3000/callback     │
+   │     response_type=code                              │
+   │     code_challenge=<S256_hash>                      │
+   │     code_challenge_method=S256                      │
+   │─────────────────────►    │                          │
+   │                          │                          │
+   │  3. Login form (Keycloak hosted)                    │
+   │◄─────────────────────    │                          │
+   │  email + password        │                          │
+   │─────────────────────►    │                          │
+   │                          │                          │
+   │  4. Redirect back with code                         │
+   │◄─────────────────────    │                          │
+   │  http://localhost:3000/callback?code=xyz            │
+   │                          │                          │
+   │  5. POST /token          │                          │
+   │     grant_type=authorization_code                   │
+   │     code=xyz                                        │
+   │     code_verifier=<original_random>                 │
+   │─────────────────────►    │                          │
+   │                          │                          │
+   │  6. access_token (JWT RS256)                        │
+   │     id_token                                        │
+   │     refresh_token                                   │
+   │◄─────────────────────    │                          │
+   │                          │                          │
+   │  7. API calls with Authorization: Bearer <token>    │
+   │─────────────────────────────────────────────────►  │
+   │                          │   Validate (JWKS cache)  │
+   │                          │─────────────────────►    │
+   │                          │◄─────────────────────    │
+   │  8. Response             │                          │
+   │◄────────────────────────────────────────────────── │
+```
+
+### Flow 2: Service-to-Service (Client Credentials)
+
+```
+experience-service              Keycloak                catalog-service
+       │                            │                         │
+       │  POST /token               │                         │
+       │  grant_type=client_creds   │                         │
+       │  client_id=experience-svc  │                         │
+       │  client_secret=<secret>    │                         │
+       │───────────────────────►    │                         │
+       │                            │                         │
+       │  access_token (5 min TTL)  │                         │
+       │◄───────────────────────    │                         │
+       │                            │                         │
+       │  (cache token until expiry - 30s buffer)             │
+       │                            │                         │
+       │  GET /api/v1/catalog/products                        │
+       │  Authorization: Bearer <service_token>               │
+       │─────────────────────────────────────────────────►   │
+       │                            │  Validate token          │
+       │                            │  Check role=service-role │
+       │                            │◄──────────────────────   │
+       │  200 OK                    │                          │
+       │◄─────────────────────────────────────────────────    │
+```
+
+### Flow 3: Token Refresh
+
+```
+Browser                    Keycloak
+   │                           │
+   │  POST /token              │
+   │  grant_type=refresh_token │
+   │  refresh_token=<rt>       │
+   │──────────────────────►    │
+   │                           │
+   │  new access_token         │
+   │  new refresh_token        │  ← Keycloak rotates refresh tokens
+   │◄──────────────────────    │
+```
+
+---
+
+## 4. api-gateway Changes
+
+### 4.1 New Dependencies (pom.xml)
+
+```xml
+<!-- JWT validation without Spring Security full stack -->
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+</dependency>
+```
+
+> **Note:** Spring Cloud Gateway is reactive (WebFlux). We use the reactive resource server,
+> not the servlet version.
+
+### 4.2 GlobalJwtFilter
+
+```java
+// api-gateway/src/main/java/com/retailstore/gateway/filter/GlobalJwtFilter.java
+package com.retailstore.gateway.filter;
+
+@Component
+@RequiredArgsConstructor
+public class GlobalJwtFilter implements GlobalFilter, Ordered {
+
+    private final ReactiveJwtDecoder jwtDecoder;
+
+    private static final List<String> PUBLIC_PATHS = List.of(
+        "/actuator/",
+        "/fallback/"
+    );
+
+    @Override
+    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+        String path = exchange.getRequest().getURI().getPath();
+        if (PUBLIC_PATHS.stream().anyMatch(path::startsWith)) {
+            return chain.filter(exchange);
+        }
+
+        String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            return unauthorized(exchange, "Missing Bearer token");
+        }
+
+        String token = authHeader.substring(7);
+        return jwtDecoder.decode(token)
+            .flatMap(jwt -> {
+                ServerHttpRequest mutated = exchange.getRequest().mutate()
+                    .header("X-User-Id",    jwt.getSubject())
+                    .header("X-User-Email", getClaimAsString(jwt, "email"))
+                    .header("X-User-Name",  getClaimAsString(jwt, "preferred_username"))
+                    .header("X-User-Role",  extractPrimaryRole(jwt))
+                    .build();
+                return chain.filter(exchange.mutate().request(mutated).build());
+            })
+            .onErrorResume(JwtException.class, e ->
+                unauthorized(exchange, "Invalid or expired token"));
+    }
+
+    private String extractPrimaryRole(Jwt jwt) {
+        // Keycloak puts roles in realm_access.roles
+        Map<String, Object> realmAccess = jwt.getClaimAsMap("realm_access");
+        if (realmAccess == null) return "CUSTOMER";
+        List<?> roles = (List<?>) realmAccess.get("roles");
+        return roles == null || roles.isEmpty() ? "CUSTOMER"
+            : roles.stream()
+                .map(Object::toString)
+                .filter(r -> List.of("CUSTOMER","ADMIN","SUPPORT","service-role").contains(r))
+                .findFirst()
+                .orElse("CUSTOMER");
+    }
+
+    private Mono<Void> unauthorized(ServerWebExchange exchange, String message) {
+        exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+        exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
+        byte[] body = ("{\"status\":401,\"error\":\"Unauthorized\",\"message\":\"" + message + "\"}").getBytes();
+        DataBuffer buffer = exchange.getResponse().bufferFactory().wrap(body);
+        return exchange.getResponse().writeWith(Mono.just(buffer));
+    }
+
+    @Override public int getOrder() { return -3; }  // Before CorrelationId(-2) and Logging(-1)
+}
+```
+
+### 4.3 SecurityConfig (Gateway)
+
+```java
+// api-gateway/src/main/java/com/retailstore/gateway/config/SecurityConfig.java
+@Configuration
+@EnableWebFluxSecurity
+public class SecurityConfig {
+
+    @Bean
+    public SecurityWebFilterChain springSecurityFilterChain(ServerHttpSecurity http) {
+        http
+            .csrf(ServerHttpSecurity.CsrfSpec::disable)
+            .authorizeExchange(exchanges -> exchanges
+                .pathMatchers("/actuator/**", "/fallback/**").permitAll()
+                .anyExchange().permitAll()   // JWT validated by GlobalJwtFilter, not Spring Security
+            );
+        return http.build();
+    }
+
+    @Bean
+    public ReactiveJwtDecoder jwtDecoder(
+            @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}") String jwksUri) {
+        return NimbusReactiveJwtDecoder.withJwkSetUri(jwksUri).build();
+    }
+}
+```
+
+### 4.4 application.yml additions
+
+```yaml
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI:http://keycloak:8180/realms/retailstore/protocol/openid-connect/certs}
+          issuer-uri:  ${KEYCLOAK_ISSUER_URI:http://keycloak:8180/realms/retailstore}
+
+# Add checkout route (previously missing)
+routes:
+  - id: checkout-service
+    uri: ${RETAIL_GATEWAY_ROUTES_CHECKOUT:http://checkout}
+    predicates:
+      - Path=/api/v1/checkout/**
+    filters:
+      - name: CircuitBreaker
+        args:
+          name: checkout-cb
+          fallbackUri: forward:/fallback/checkout
+
+# Remove identity-service route (Keycloak handles this directly)
+```
+
+---
+
+## 5. Downstream Service Changes (All Services)
+
+### 5.1 New Dependency (all services pom.xml)
+
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+</dependency>
+```
+
+### 5.2 Resource Server Config (catalog, cart, checkout, order)
+
+```java
+// Pattern: infrastructure/config/SecurityConfig.java
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .oauth2ResourceServer(oauth2 -> oauth2
+                .jwt(jwt -> jwt.jwkSetUri(jwkSetUri))   // validates service-to-service tokens
+            )
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/actuator/**", "/swagger-ui/**", "/api-docs/**").permitAll()
+                .anyRequest().authenticated()
+            );
+        return http.build();
+    }
+}
+```
+
+### 5.3 User Context Extraction (from gateway-forwarded headers)
+
+```java
+// Shared pattern — each service's controller uses this
+// No JWT re-parsing needed — gateway already validated and forwarded claims
+
+@RestController
+@RequestMapping("/api/v1/orders")
+public class OrderController {
+
+    @GetMapping("/customer/{customerId}")
+    public ResponseEntity<Page<OrderResponse>> getCustomerOrders(
+            @PathVariable String customerId,
+            @RequestHeader(value = "X-User-Id",   required = false) String requestingUserId,
+            @RequestHeader(value = "X-User-Role", required = false) String userRole,
+            @RequestParam(defaultValue = "0")  int page,
+            @RequestParam(defaultValue = "10") int size) {
+
+        // Fine-grained authorization: customer can only see their own orders
+        if (!"ADMIN".equals(userRole) && !customerId.equals(requestingUserId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
+        return ResponseEntity.ok(orderService.getOrdersByCustomer(customerId, page, size));
+    }
+}
+```
+
+### 5.4 application.yml additions (all downstream services)
+
+```yaml
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI:http://keycloak:8180/realms/retailstore/protocol/openid-connect/certs}
+```
+
+---
+
+## 6. experience-service — Client Credentials Token Management
+
+```java
+// experience-service/src/main/java/com/.../infrastructure/security/ServiceTokenProvider.java
+@Component
+public class ServiceTokenProvider {
+
+    private final WebClient keycloakClient;
+    private volatile String cachedToken;
+    private volatile Instant tokenExpiry = Instant.EPOCH;
+
+    @Value("${keycloak.client-id}")
+    private String clientId;
+
+    @Value("${keycloak.client-secret}")
+    private String clientSecret;
+
+    @Value("${keycloak.token-uri}")
+    private String tokenUri;
+
+    public ServiceTokenProvider(WebClient.Builder builder,
+                                @Value("${keycloak.base-url}") String baseUrl) {
+        this.keycloakClient = builder.baseUrl(baseUrl).build();
+    }
+
+    /**
+     * Returns a valid service token, fetching a new one if the cached one
+     * is expired (with a 30s buffer to avoid edge cases).
+     */
+    public Mono<String> getToken() {
+        if (cachedToken != null && Instant.now().isBefore(tokenExpiry.minusSeconds(30))) {
+            return Mono.just(cachedToken);
+        }
+        return fetchNewToken();
+    }
+
+    private Mono<String> fetchNewToken() {
+        return keycloakClient.post()
+            .uri(tokenUri)
+            .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+            .body(BodyInserters.fromFormData("grant_type", "client_credentials")
+                .with("client_id",     clientId)
+                .with("client_secret", clientSecret))
+            .retrieve()
+            .bodyToMono(Map.class)
+            .map(resp -> {
+                cachedToken  = (String) resp.get("access_token");
+                int expiresIn = (int) resp.getOrDefault("expires_in", 300);
+                tokenExpiry  = Instant.now().plusSeconds(expiresIn);
+                return cachedToken;
+            });
+    }
+}
+```
+
+```java
+// Usage in CatalogClient
+@Component
+public class CatalogClient {
+
+    private final WebClient webClient;
+    private final ServiceTokenProvider tokenProvider;
+
+    public Mono<Map> getProducts(int page, int size, String tags) {
+        return tokenProvider.getToken()
+            .flatMap(token -> webClient.get()
+                .uri(u -> u.path("/api/v1/catalog/products")
+                    .queryParam("page", page).queryParam("size", size)
+                    .queryParamIfPresent("tags", Optional.ofNullable(tags))
+                    .build())
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .retrieve()
+                .bodyToMono(Map.class)
+                .onErrorReturn(Map.of("products", List.of())));
+    }
+}
+```
+
+---
+
+## 7. Web Storefront Changes
+
+### 7.1 Remove custom login/register pages
+
+The login/register flow moves entirely to Keycloak's hosted login page.
+React code triggers the PKCE redirect; Keycloak handles the UI.
+
+### 7.2 PKCE Auth Flow (using `oidc-client-ts`)
+
+```typescript
+// web-storefront/src/services/authService.ts
+import { UserManager, WebStorageStateStore } from 'oidc-client-ts'
+
+const KEYCLOAK_URL = import.meta.env.VITE_KEYCLOAK_URL ?? 'http://localhost:8180'
+const REALM        = import.meta.env.VITE_KEYCLOAK_REALM ?? 'retailstore'
+
+export const userManager = new UserManager({
+  authority:             `${KEYCLOAK_URL}/realms/${REALM}`,
+  client_id:             'web-storefront',
+  redirect_uri:          `${window.location.origin}/callback`,
+  post_logout_redirect_uri: `${window.location.origin}/`,
+  response_type:         'code',
+  scope:                 'openid profile email',
+  userStore:             new WebStorageStateStore({ store: localStorage }),
+  automaticSilentRenew:  true,
+  silent_redirect_uri:   `${window.location.origin}/silent-renew.html`,
+})
+
+export const authService = {
+  login:    ()        => userManager.signinRedirect(),
+  logout:   ()        => userManager.signoutRedirect(),
+  getUser:  ()        => userManager.getUser(),
+  callback: ()        => userManager.signinRedirectCallback(),
+  getToken: async ()  => {
+    const user = await userManager.getUser()
+    return user?.access_token ?? null
+  },
+}
+```
+
+### 7.3 Axios interceptor — attach token automatically
+
+```typescript
+// web-storefront/src/services/api.ts
+api.interceptors.request.use(async config => {
+  const token = await authService.getToken()
+  if (token) {
+    config.headers['Authorization'] = `Bearer ${token}`
+  }
+  config.headers['X-Correlation-Id'] = Math.random().toString(36).slice(2, 11)
+  return config
+})
+```
+
+### 7.4 New routes in App.tsx
+
+```typescript
+// Add callback and silent-renew routes
+<Route path="/callback"     element={<AuthCallback />} />
+<Route path="/silent-renew" element={<SilentRenew />} />
+```
+
+---
+
+## 8. Keycloak — Docker Compose Setup
+
+```yaml
+# In retailstore-platform/docker-compose.yml — add:
+
+keycloak:
+  image: quay.io/keycloak/keycloak:25.0.6
+  container_name: keycloak
+  command: start-dev --import-realm
+  environment:
+    KEYCLOAK_ADMIN: admin
+    KEYCLOAK_ADMIN_PASSWORD: admin
+    KC_DB: dev-file                     # H2 file-based for local dev
+    KC_HTTP_PORT: 8180
+    KC_HOSTNAME_STRICT: "false"
+    KC_HOSTNAME_STRICT_HTTPS: "false"
+  ports:
+    - "8180:8180"
+  volumes:
+    - ./keycloak/realms:/opt/keycloak/data/import   # realm JSON auto-imported
+  networks: [retailstore]
+  healthcheck:
+    test: ["CMD-SHELL", "curl -sf http://localhost:8180/realms/retailstore || exit 1"]
+    interval: 15s
+    timeout: 10s
+    retries: 10
+    start_period: 60s
+```
+
+### Realm Export (retailstore-platform/keycloak/realms/retailstore-realm.json)
+
+The realm JSON defines:
+- Realm name: `retailstore`
+- Clients: `web-storefront` (public, PKCE), `experience-service` (confidential),
+  `checkout-service` (confidential)
+- Realm roles: `CUSTOMER`, `ADMIN`, `SUPPORT`, `service-role`
+- Default role for new users: `CUSTOMER`
+- Token settings: access token 5 min, refresh token 30 min, refresh token rotation enabled
+- PKCE enforced for `web-storefront`
+
+---
+
+## 9. Kubernetes / Helm Changes
+
+### Keycloak Helm Chart (retailstore-platform/helm/dev/keycloak.yaml)
+
+```yaml
+# Uses bitnami/keycloak chart
+auth:
+  adminUser: admin
+  adminPassword: admin
+production: false
+proxy: edge
+extraEnvVars:
+  - name: KC_HOSTNAME_STRICT
+    value: "false"
+keycloakConfigCli:
+  enabled: true
+  configuration:
+    retailstore.yaml: |
+      realm: retailstore
+      enabled: true
+      ...
+```
+
+### Updated ENV vars per service
+
+| Service | New ENV Vars |
+|---|---|
+| api-gateway | `KEYCLOAK_JWKS_URI`, `KEYCLOAK_ISSUER_URI` |
+| experience-service | `KEYCLOAK_BASE_URL`, `KEYCLOAK_TOKEN_URI`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET` |
+| checkout-service | `KEYCLOAK_BASE_URL`, `KEYCLOAK_TOKEN_URI`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET` |
+| catalog, cart, order | `KEYCLOAK_JWKS_URI` |
+| web-storefront | `VITE_KEYCLOAK_URL`, `VITE_KEYCLOAK_REALM` |
+
+---
+
+## 10. File Change Inventory
+
+### Files to DELETE
+```
+identity-service/ (entire service — all Java files, pom.xml, Dockerfile, application.yml)
+```
+
+### Files to CREATE
+```
+api-gateway/.../config/SecurityConfig.java
+api-gateway/.../filter/GlobalJwtFilter.java
+experience-service/.../infrastructure/security/ServiceTokenProvider.java
+order-service/.../api/rest/v1/controller/GlobalExceptionHandler.java
+order-service/.../infrastructure/config/SqsConfig.java
+catalog-service/.../infrastructure/config/SecurityConfig.java
+cart-service/.../infrastructure/config/SecurityConfig.java
+checkout-service/.../infrastructure/config/SecurityConfig.java    (update existing)
+order-service/.../infrastructure/config/SecurityConfig.java
+web-storefront/src/services/authService.ts
+web-storefront/src/pages/AuthCallback.tsx
+web-storefront/public/silent-renew.html
+retailstore-platform/keycloak/realms/retailstore-realm.json
+```
+
+### Files to MODIFY
+```
+api-gateway/pom.xml                              + oauth2-resource-server dep
+api-gateway/src/main/resources/application.yml  + keycloak config, + checkout route, - identity route
+experience-service/pom.xml                       + oauth2-resource-server dep
+experience-service/.../client/CatalogClient.java + service token header
+experience-service/.../client/CartClient.java    + service token header
+experience-service/.../config/WebClientConfig.java
+checkout-service/.../client/OrderServiceClient.java + service token header
+catalog-service/pom.xml                          + oauth2-resource-server dep
+cart-service/pom.xml                             + oauth2-resource-server dep
+order-service/pom.xml                            + oauth2-resource-server dep
+web-storefront/package.json                      + oidc-client-ts
+web-storefront/src/services/api.ts               + token interceptor
+web-storefront/src/App.tsx                       + callback routes
+web-storefront/src/store/useAppStore.ts          + user state from Keycloak
+retailstore-platform/docker-compose.yml          + keycloak service, - identity service
+retailstore-platform/helm/dev/gateway.yaml       + keycloak env vars
+retailstore-platform/helm/dev/experience.yaml    + keycloak env vars
+retailstore-platform/helm/dev/orders.yaml        + exception handler (no extra env)
+```
+
+---
+
+## 11. Testing Strategy
+
+### Step 1 — Start Keycloak Locally
+
+```bash
+cd retailstore-platform
+docker compose up keycloak -d
+# Wait for health check to pass (~60 seconds first start)
+
+# Verify realm imported:
+curl http://localhost:8180/realms/retailstore/.well-known/openid-configuration
+# Should return JSON with authorization_endpoint, token_endpoint, jwks_uri
+```
+
+### Step 2 — Create a Test User
+
+```bash
+# Via Keycloak Admin UI: http://localhost:8180/admin  (admin/admin)
+# Or via CLI:
+docker exec keycloak /opt/keycloak/bin/kcadm.sh config credentials \
+  --server http://localhost:8180 --realm master --user admin --password admin
+
+docker exec keycloak /opt/keycloak/bin/kcadm.sh create users -r retailstore \
+  -s username=testuser -s email=test@example.com -s enabled=true \
+  -s firstName=Test -s lastName=User
+
+docker exec keycloak /opt/keycloak/bin/kcadm.sh set-password -r retailstore \
+  --username testuser --new-password password123
+
+docker exec keycloak /opt/keycloak/bin/kcadm.sh add-roles -r retailstore \
+  --uusername testuser --rolename CUSTOMER
+```
+
+### Step 3 — Get a Token (Direct Grant for testing)
+
+```bash
+TOKEN=$(curl -s -X POST \
+  http://localhost:8180/realms/retailstore/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password&client_id=web-storefront&username=testuser&password=password123" \
+  | jq -r '.access_token')
+
+echo $TOKEN | cut -d'.' -f2 | base64 -d | jq .   # decode claims
+```
+
+### Step 4 — Call api-gateway with Token
+
+```bash
+# Should succeed (200)
+curl -H "Authorization: Bearer $TOKEN" \
+     http://localhost:8080/api/v1/catalog/products | jq .
+
+# Should fail (401)
+curl http://localhost:8080/api/v1/catalog/products
+# {"status":401,"error":"Unauthorized","message":"Missing Bearer token"}
+```
+
+### Step 5 — Test Service-to-Service Token
+
+```bash
+# Get a service token for experience-service
+SVC_TOKEN=$(curl -s -X POST \
+  http://localhost:8180/realms/retailstore/protocol/openid-connect/token \
+  -d "grant_type=client_credentials&client_id=experience-service&client_secret=<secret>" \
+  | jq -r '.access_token')
+
+# Call catalog directly with service token (bypasses gateway for direct test)
+curl -H "Authorization: Bearer $SVC_TOKEN" \
+     http://localhost:8081/api/v1/catalog/products | jq .
+```
+
+### Step 6 — Test Token Expiry / Refresh
+
+```bash
+# Decode expiry
+echo $TOKEN | cut -d'.' -f2 | base64 -d | jq '.exp | todate'
+
+# After expiry, call should return 401
+# Refresh:
+REFRESH_TOKEN="<from initial token response>"
+curl -X POST http://localhost:8180/realms/retailstore/protocol/openid-connect/token \
+  -d "grant_type=refresh_token&client_id=web-storefront&refresh_token=$REFRESH_TOKEN"
+```
+
+### Step 7 — Test Frontend PKCE Flow
+
+```bash
+cd web-storefront && npm run dev
+# Navigate to http://localhost:3000
+# Click Login → redirected to Keycloak
+# Login with testuser/password123
+# Redirected back to http://localhost:3000/callback
+# App should show products (cart badge, etc.)
+```
+
+---
+
+## 12. Quick Revision Summary
+
+### The Two Layers (Never Merge)
+
+| Layer | Tool | Does |
+|---|---|---|
+| Identity Provider (IdP) | **Keycloak** | Issues tokens, manages users, sessions, MFA |
+| API Gateway | **Spring Cloud Gateway** | Validates tokens, routes, rate-limits |
+
+### Token Types in This System
+
+| Token | Issued by | Used by | Flow |
+|---|---|---|---|
+| User access_token (JWT RS256) | Keycloak | Browser → api-gateway | Authorization Code + PKCE |
+| User refresh_token | Keycloak | Browser → Keycloak | Silent renew |
+| Service access_token (JWT RS256) | Keycloak | experience-svc, checkout-svc → downstream | Client Credentials |
+
+### Where Each Concern Lives
+
+| Concern | Location |
+|---|---|
+| Token issuance | Keycloak |
+| Token validation (signature, expiry) | api-gateway (GlobalJwtFilter) |
+| User identity propagation | api-gateway → X-User-* headers |
+| Fine-grained authorization (your data only) | Individual service controllers |
+| Service-to-service auth | OAuth2 Client Credentials (Keycloak) |
+| Rate limiting | api-gateway |
+| CORS | api-gateway |
+| Business aggregation | experience-service (BFF) |
+
+### Key OAuth2 Concepts
+
+| Term | Meaning in This System |
+|---|---|
+| `Authorization Code + PKCE` | Login flow for browser/SPA — most secure, no client secret needed |
+| `Client Credentials` | Service-to-service login — like a service account |
+| `JWKS endpoint` | Keycloak's URL for public keys — gateway fetches and caches these |
+| `Realm` | Keycloak's tenant — `retailstore` realm isolates our users/clients |
+| `Client` | An application registered in Keycloak (web-storefront, experience-service, etc.) |
+| `Scope` | What the token grants access to (`openid`, `profile`, `email`) |
+| `RS256` | RSA asymmetric signing — private key signs, public key verifies (no shared secret) |
+| `sub` | Subject claim — the userId, used as customerId throughout the platform |
+
+### What Got Removed and Why
+
+| Removed | Why |
+|---|---|
+| `identity-service` | Reimplements OAuth2 from scratch — Keycloak does this better |
+| Shared JWT secret | RS256 asymmetric signing replaces symmetric HMAC — no secret to share |
+| Custom register/login endpoints | Keycloak hosts these with security hardening, MFA, brute-force protection |
+| `UserAccount` JPA entity (as auth entity) | Users live in Keycloak; services only need `sub` (userId) from the token |

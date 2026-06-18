@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head><title>Silent Renew</title></head>
+<body>
+<script>
+  // oidc-client-ts silent token renewal iframe callback
+  window.addEventListener('load', () => {
+    import('/src/services/authService.ts').then(({ userManager }) => {
+      userManager.signinSilentCallback()
+    })
+  })
+</script>
+</body>
+</html>

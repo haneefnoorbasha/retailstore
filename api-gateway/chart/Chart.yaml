@@ -1,0 +1,9 @@
+apiVersion: v2
+name: api-gateway
+description: RetailStore — API Gateway: auth, rate-limit, routing
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+maintainers:
+  - name: RetailStore Platform Team
+keywords: [retailstore, gateway, api-gateway, routing, ecommerce]

@@ -1,0 +1,14 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://${RETAIL_IDENTITY_DB_ENDPOINT}/${RETAIL_IDENTITY_DB_NAME:identitydb}
+    username: ${RETAIL_IDENTITY_DB_USER:identity_user}
+    password: ${RETAIL_IDENTITY_DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      minimum-idle: 2
+      maximum-pool-size: 20
+      pool-name: IdentityHikariPool
+  jpa:
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
