@@ -1,0 +1,32 @@
+# Local profile — runs on Docker Desktop k8s (local machine).
+# Helm injects KEYCLOAK_HOST=keycloak, RETAIL_EXPERIENCE_ENDPOINTS_* = cluster DNS names
+# IntelliJ: port-forward.sh active; ${VAR:localhost} defaults resolve to forwarded ports.
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}/realms/retailstore/protocol/openid-connect/certs
+
+retail:
+  experience:
+    keycloak:
+      token-uri: http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}/realms/retailstore/protocol/openid-connect/token
+    endpoints:
+      catalog: ${RETAIL_EXPERIENCE_ENDPOINTS_CATALOG:http://localhost:8081}
+      carts:   ${RETAIL_EXPERIENCE_ENDPOINTS_CARTS:http://localhost:8082}
+      orders:  ${RETAIL_EXPERIENCE_ENDPOINTS_ORDERS:http://localhost:8084}
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://${ZIPKIN_HOST:localhost}:9411/api/v2/spans
+
+logging:
+  level:
+    com.retailstore: DEBUG
+    reactor.netty: INFO

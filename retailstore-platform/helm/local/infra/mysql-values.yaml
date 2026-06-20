@@ -1,0 +1,40 @@
+# Bitnami MySQL 14.x (MySQL 9.x) — local Docker Desktop k8s
+
+auth:
+  rootPassword: "rootpass"
+  createDatabase: false
+
+primary:
+  initdbScripts:
+    init.sql: |
+      CREATE DATABASE IF NOT EXISTS catalogdb  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+      CREATE DATABASE IF NOT EXISTS ordersdb   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+      CREATE DATABASE IF NOT EXISTS keycloakdb CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+      CREATE USER IF NOT EXISTS 'catalog_user'@'%'  IDENTIFIED BY 'catalog_pass';
+      CREATE USER IF NOT EXISTS 'orders_user'@'%'   IDENTIFIED BY 'orders_pass';
+      CREATE USER IF NOT EXISTS 'keycloak_user'@'%' IDENTIFIED BY 'keycloak_pass';
+
+      GRANT ALL PRIVILEGES ON catalogdb.*  TO 'catalog_user'@'%';
+      GRANT ALL PRIVILEGES ON ordersdb.*   TO 'orders_user'@'%';
+      GRANT ALL PRIVILEGES ON keycloakdb.* TO 'keycloak_user'@'%';
+
+      FLUSH PRIVILEGES;
+
+  extraFlags: "--character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci"
+
+  persistence:
+    size: 2Gi
+
+  resources:
+    limits:
+      memory: 512Mi
+    requests:
+      cpu: 150m
+      memory: 256Mi
+
+secondary:
+  replicaCount: 0
+
+metrics:
+  enabled: false

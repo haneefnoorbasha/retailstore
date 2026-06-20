@@ -1,0 +1,47 @@
+# Local profile — runs on Docker Desktop k8s (local machine).
+# Helm injects MYSQL_HOST=mysql, RETAIL_ORDER_MESSAGING_SQS_QUEUE_URL, KEYCLOAK_HOST=keycloak
+# IntelliJ: port-forward.sh active; ${VAR:localhost} defaults resolve to forwarded ports.
+
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/ordersdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${MYSQL_USER:orders_user}
+    password: ${MYSQL_PASSWORD:orders_pass}
+    hikari:
+      minimum-idle: 2
+      maximum-pool-size: 5
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+  flyway:
+    enabled: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}/realms/retailstore/protocol/openid-connect/certs
+
+retail:
+  order:
+    messaging:
+      enabled: true
+      sqs:
+        queue-url: ${RETAIL_ORDER_MESSAGING_SQS_QUEUE_URL:http://localhost:4566/000000000000/order-events-local}
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://${ZIPKIN_HOST:localhost}:9411/api/v2/spans
+
+logging:
+  level:
+    com.retailstore: DEBUG
+    org.hibernate.SQL: DEBUG

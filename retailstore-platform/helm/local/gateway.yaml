@@ -1,0 +1,26 @@
+image:
+  repository: "host.docker.internal:5000/retailstore/gateway"
+  tag: "local"
+  pullPolicy: IfNotPresent
+replicaCount: 1
+appEnv:
+  SPRING_PROFILES_ACTIVE: "local"
+  RETAIL_GATEWAY_ROUTES_EXPERIENCE: "http://experience:8080"
+  RETAIL_GATEWAY_ROUTES_CATALOG:    "http://catalog:8080"
+  RETAIL_GATEWAY_ROUTES_CARTS:      "http://carts:8080"
+  RETAIL_GATEWAY_ROUTES_ORDERS:     "http://orders:8080"
+  RETAIL_GATEWAY_ROUTES_CHECKOUT:   "http://checkout:8080"
+  KEYCLOAK_HOST: "keycloak"
+  KEYCLOAK_PORT: "8180"
+  REDIS_HOST:    "redis-master"
+  REDIS_PORT:    "6379"
+  ALLOWED_ORIGIN: "http://localhost:3000"
+  ZIPKIN_HOST:   "zipkin"
+resources:
+  limits:
+    memory: 512Mi          # reduced from 768Mi — laptop is more constrained than EC2
+  requests:
+    cpu: 100m
+    memory: 256Mi
+autoscaling:
+  enabled: false

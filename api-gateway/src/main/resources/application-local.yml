@@ -1,0 +1,24 @@
+# Local profile — runs on Docker Desktop k8s (local machine).
+# Helm injects cluster DNS names via env vars; IntelliJ uses ${VAR:localhost} defaults
+# with port-forward.sh active.
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}/realms/retailstore/protocol/openid-connect/certs
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://${ZIPKIN_HOST:localhost}:9411/api/v2/spans
+
+logging:
+  level:
+    com.retailstore: DEBUG
+    org.springframework.cloud.gateway: DEBUG
+    reactor.netty: INFO

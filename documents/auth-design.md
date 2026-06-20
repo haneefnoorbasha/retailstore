@@ -9,8 +9,8 @@
 > |---------|---------------|
 > | [`api-gateway/documents/authentication.md`](../api-gateway/documents/authentication.md) | `GlobalJwtFilter` steps, JWKS wiring per env, public paths, troubleshooting |
 > | [`web-storefront/documents/authentication.md`](../web-storefront/documents/authentication.md) | PKCE flow, `oidc-client-ts` setup, silent renewal, env config, testing |
-> | `experience-service/documents/authentication.md` *(TODO)* | Client Credentials token fetch, `ServiceTokenProvider` |
-> | `checkout-service/documents/authentication.md` *(TODO)* | Client Credentials for order-service call |
+> | [`experience-service/documents/authentication.md`](../experience-service/documents/authentication.md) | Inbound JWT validation, `ServiceTokenProvider`, parallel S2S calls to catalog/cart/orders |
+> | [`checkout-service/documents/authentication.md`](../checkout-service/documents/authentication.md) | Inbound JWT validation, `ServiceTokenProvider`, checkout→order-service submit flow |
 
 ---
 
@@ -22,12 +22,14 @@ pattern. PROD only tightens non-auth settings on top.
 
 | | LOCAL (default) | DEV (k3s on EC2) | STAGE (EKS) | PROD (EKS) |
 |---|---|---|---|---|
-| **Keycloak** | Standalone Docker | Bitnami k3s pod | Bitnami EKS pod | Bitnami EKS HA (2 pods) |
-| **Keycloak DB** | H2 embedded | MySQL `keycloakdb` on k3s | RDS MySQL (shared) | RDS MySQL (dedicated) |
+| **Keycloak** | Bitnami k3s pod (Rancher Desktop) | Bitnami k3s pod (EC2) | Bitnami EKS pod | Bitnami EKS HA (2 pods) |
+| **Keycloak DB** | MySQL `keycloakdb` on k3s | MySQL `keycloakdb` on k3s | RDS MySQL (shared) | RDS MySQL (dedicated) |
 | **JWKS URI pattern** | `${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}/…` | Same `${VAR:localhost}` defaults | `${KEYCLOAK_JWKS_URI}` (no default) | Same as stage |
 | **Token URI (M2S)** | Same HOST/PORT pattern | Same HOST/PORT pattern | `${KEYCLOAK_TOKEN_URI}` (no default) | Same as stage |
-| **Client secrets** | Defaults in `application.yml` | Helm dev values + `optional: true` k8s Secret | K8s Secret (required) | AWS Secrets Manager |
-| **Realm import** | Docker volume mount | k8s ConfigMap → pod mount | Manual or Terraform | Same as stage |
+| **Client secrets** | Helm local values (plain text, dev only) | Helm dev values + `optional: true` k8s Secret | K8s Secret (required) | AWS Secrets Manager |
+| **Realm import** | k8s ConfigMap → pod mount | k8s ConfigMap → pod mount | Manual or Terraform | Same as stage |
+| **Spring profile** | `dev` | `dev` | `stage` | `prod` |
+| **Image source** | Local Docker build (`imagePullPolicy: Never`) | ECR registry (`imagePullPolicy: IfNotPresent`) | ECR | ECR |
 | **MySQL SSL** | No | No | Yes (`useSSL=true&requireSSL=true`) | Yes |
 | **Swagger** | Enabled | Enabled | Enabled (internal only) | **Disabled** |
 | **Health show-details** | `always` | `always` | `when-authorized` | `never` |
@@ -86,8 +88,8 @@ pattern. PROD only tightens non-auth settings on top.
 │           │                                                                  │
 │  ┌────────▼─────────┐   ┌───────────────────────────────────────────────┐   │
 │  │ experience-      │   │  Direct routes (catalog, cart, checkout,       │   │
-│  │ service (BFF)    │   │  orders) — receive X-User-* headers, no        │   │
-│  │                  │   │  re-validation needed                          │   │
+│  │ service (BFF)    │   │  orders) — each independently validates the    │   │
+│  │                  │   │  incoming JWT via Spring Security + JWKS       │   │
 │  │ Calls downstream │   └───────────────────────────────────────────────┘   │
 │  │ with Client      │                                                        │
 │  │ Credentials JWT  │                                                        │
@@ -231,29 +233,82 @@ Browser                   Keycloak                  api-gateway
 
 ### Flow 2: Service-to-Service (Client Credentials)
 
+Two services make outbound S2S calls. Both **bypass the api-gateway entirely** and call
+downstream services directly over the internal cluster network:
+
+- `experience-service` → `catalog-service`, `cart-service`, `order-service` (BFF aggregation)
+- `checkout-service` → `order-service` (creates the permanent order record on submit)
+
+**Flow 2a — experience-service → catalog-service** (same pattern for cart and order)
+
 ```
-experience-service              Keycloak                catalog-service
-       │                            │                         │
-       │  POST /token               │                         │
-       │  grant_type=client_creds   │                         │
-       │  client_id=experience-svc  │                         │
-       │  client_secret=<secret>    │                         │
-       │───────────────────────►    │                         │
-       │                            │                         │
-       │  access_token (5 min TTL)  │                         │
-       │◄───────────────────────    │                         │
-       │                            │                         │
-       │  (cache token until expiry - 30s buffer)             │
-       │                            │                         │
-       │  GET /api/v1/catalog/products                        │
+experience-service                  Keycloak            catalog-service
+       │                                │                      │
+       │  (first outbound call)         │                      │
+       │  POST /realms/retailstore/protocol/openid-connect/token
+       │  grant_type=client_credentials │                      │
+       │  client_id=experience-service  │                      │
+       │  client_secret=<secret>        │                      │
+       │─────────────────────────►      │                      │
+       │                                │                      │
+       │  access_token (5-min JWT)      │                      │
+       │  { sub: "experience-service",  │                      │
+       │    realm_access.roles:         │                      │
+       │      ["service-role"] }        │                      │
+       │◄─────────────────────────      │                      │
+       │                                │                      │
+       │  Token cached in JVM until expiry − 30s buffer        │
+       │  Subsequent calls reuse cached token (no Keycloak hit)│
+       │                                │                      │
+       │  GET /api/v1/catalog/products  │                      │
+       │  Authorization: Bearer <service_token>                │
+       │───────────────────────────────────────────────────►  │
+       │                                │                      │
+       │                                │  Spring Security intercepts
+       │                                │  Fetches JWKS from Keycloak (cached, lazy)
+       │                                │  Verifies RS256 signature ← full crypto check
+       │                                │  Verifies token expiry
+       │                                │  Reads realm_access.roles → [service-role]
+       │                                │  ✓ Request passes to controller
+       │                                │                      │
+       │  200 OK                        │                      │
+       │◄───────────────────────────────────────────────────  │
+```
+
+**Flow 2b — checkout-service → order-service**
+
+```
+checkout-service                  Keycloak              order-service
+       │                              │                       │
+       │  POST /token                 │                       │
+       │  grant_type=client_credentials                       │
+       │  client_id=checkout-service  │                       │
+       │  client_secret=<secret>      │                       │
+       │─────────────────────────►    │                       │
+       │  access_token (5-min JWT)    │                       │
+       │◄─────────────────────────    │                       │
+       │                              │                       │
+       │  POST /api/v1/orders         │                       │
        │  Authorization: Bearer <service_token>               │
+       │  Body: { customerId, lineItems, shippingAddress, total, ... }
        │─────────────────────────────────────────────────►   │
-       │                            │  Validate token          │
-       │                            │  Check role=service-role │
-       │                            │◄──────────────────────   │
-       │  200 OK                    │                          │
-       │◄─────────────────────────────────────────────────    │
+       │                              │                       │
+       │                              │  Verifies RS256 signature (JWKS)
+       │                              │  Reads realm_access.roles → [service-role]
+       │                              │  ✓ Request passes to controller
+       │                              │                       │
+       │  201 Created { id: "ord-..." }                        │
+       │◄─────────────────────────────────────────────────   │
 ```
+
+> **Independent validation at every service boundary:** Each downstream service validates the
+> incoming JWT independently via its own JWKS lookup — it never trusts that a caller already
+> checked it. The gateway validates user tokens; downstream services validate whatever token
+> arrives at their boundary: a **user token** when the request was routed from the gateway, or
+> a **service token** when called by `experience-service` or `checkout-service`. Both are
+> Keycloak-issued RS256 JWTs — the receiving service can't tell the difference in the validation
+> step; it just checks the signature and reads the claims. Keycloak's public key is the single
+> shared trust anchor across all services.
 
 ### Flow 3: Token Refresh
 
@@ -531,71 +586,82 @@ spring:
 
 ---
 
-## 6. experience-service — Client Credentials Token Management
+## 6. Service-to-Service Token Management
+
+### 6.1 experience-service (reactive — Mono)
+
+`experience-service` is WebFlux (reactive). `ServiceTokenProvider` returns `Mono<String>` and
+clients chain off it with `flatMap`.
+
+**Config properties** (`application.yml` / `application-dev.yml` / `application-stage.yml`):
+
+```yaml
+retail:
+  experience:
+    keycloak:
+      token-uri:     ${KEYCLOAK_TOKEN_URI:http://localhost:8180/realms/retailstore/protocol/openid-connect/token}
+      client-id:     ${KEYCLOAK_CLIENT_ID:experience-service}
+      client-secret: ${KEYCLOAK_CLIENT_SECRET:exp-service-secret}
+```
 
 ```java
-// experience-service/src/main/java/com/.../infrastructure/security/ServiceTokenProvider.java
+// experience-service/.../infrastructure/security/ServiceTokenProvider.java
 @Component
 public class ServiceTokenProvider {
 
-    private final WebClient keycloakClient;
+    private final WebClient tokenClient;
+    private final String clientId;
+    private final String clientSecret;
     private volatile String cachedToken;
     private volatile Instant tokenExpiry = Instant.EPOCH;
 
-    @Value("${keycloak.client-id}")
-    private String clientId;
-
-    @Value("${keycloak.client-secret}")
-    private String clientSecret;
-
-    @Value("${keycloak.token-uri}")
-    private String tokenUri;
-
-    public ServiceTokenProvider(WebClient.Builder builder,
-                                @Value("${keycloak.base-url}") String baseUrl) {
-        this.keycloakClient = builder.baseUrl(baseUrl).build();
+    public ServiceTokenProvider(
+            WebClient.Builder webClientBuilder,
+            @Value("${retail.experience.keycloak.token-uri}") String tokenUri,
+            @Value("${retail.experience.keycloak.client-id}") String clientId,
+            @Value("${retail.experience.keycloak.client-secret}") String clientSecret) {
+        this.tokenClient = webClientBuilder.baseUrl(tokenUri).build();
+        this.clientId = clientId;
+        this.clientSecret = clientSecret;
     }
 
-    /**
-     * Returns a valid service token, fetching a new one if the cached one
-     * is expired (with a 30s buffer to avoid edge cases).
-     */
     public Mono<String> getToken() {
         if (cachedToken != null && Instant.now().isBefore(tokenExpiry.minusSeconds(30))) {
             return Mono.just(cachedToken);
         }
-        return fetchNewToken();
+        return fetchToken();
     }
 
-    private Mono<String> fetchNewToken() {
-        return keycloakClient.post()
-            .uri(tokenUri)
+    private Mono<String> fetchToken() {
+        return tokenClient.post()
             .contentType(MediaType.APPLICATION_FORM_URLENCODED)
             .body(BodyInserters.fromFormData("grant_type", "client_credentials")
-                .with("client_id",     clientId)
+                .with("client_id", clientId)
                 .with("client_secret", clientSecret))
             .retrieve()
             .bodyToMono(Map.class)
-            .map(resp -> {
-                cachedToken  = (String) resp.get("access_token");
-                int expiresIn = (int) resp.getOrDefault("expires_in", 300);
-                tokenExpiry  = Instant.now().plusSeconds(expiresIn);
-                return cachedToken;
+            .map(response -> {
+                String token = (String) response.get("access_token");
+                Integer expiresIn = (Integer) response.get("expires_in");
+                cachedToken = token;
+                tokenExpiry = Instant.now().plusSeconds(expiresIn != null ? expiresIn : 300);
+                return token;
             });
     }
 }
 ```
 
 ```java
-// Usage in CatalogClient
+// experience-service/.../infrastructure/client/CatalogClient.java
 @Component
 public class CatalogClient {
 
+    @Qualifier("catalogClient")
     private final WebClient webClient;
-    private final ServiceTokenProvider tokenProvider;
+    private final ServiceTokenProvider serviceTokenProvider;
 
     public Mono<Map> getProducts(int page, int size, String tags) {
-        return tokenProvider.getToken()
+        return serviceTokenProvider.getToken()
             .flatMap(token -> webClient.get()
                 .uri(u -> u.path("/api/v1/catalog/products")
                     .queryParam("page", page).queryParam("size", size)
@@ -606,8 +672,142 @@ public class CatalogClient {
                 .bodyToMono(Map.class)
                 .onErrorReturn(Map.of("products", List.of())));
     }
+
+    public Mono<Map> getProduct(String id) {
+        return serviceTokenProvider.getToken()
+            .flatMap(token -> webClient.get()
+                .uri("/api/v1/catalog/products/{id}", id)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .retrieve()
+                .bodyToMono(Map.class));
+    }
 }
 ```
+
+The `CartClient` follows the identical pattern — `getToken().flatMap(token -> ...)` — for
+`GET /api/v1/carts/{customerId}` and `POST /api/v1/carts/{customerId}/items`.
+
+---
+
+### 6.2 checkout-service (blocking — synchronous)
+
+`checkout-service` is servlet-based (Spring MVC). `ServiceTokenProvider` returns a plain
+`String` and uses `.block()` inside the token fetch.
+
+**Config properties**:
+
+```yaml
+retail:
+  checkout:
+    keycloak:
+      token-uri:     ${KEYCLOAK_TOKEN_URI:http://localhost:8180/realms/retailstore/protocol/openid-connect/token}
+      client-id:     ${KEYCLOAK_CLIENT_ID:checkout-service}
+      client-secret: ${KEYCLOAK_CLIENT_SECRET:checkout-service-secret}
+    endpoints:
+      orders: ${RETAIL_CHECKOUT_ENDPOINTS_ORDERS:http://orders}
+```
+
+```java
+// checkout-service/.../infrastructure/security/ServiceTokenProvider.java
+@Component
+public class ServiceTokenProvider {
+
+    private final WebClient tokenClient;
+    private final String clientId;
+    private final String clientSecret;
+    private volatile String cachedToken;
+    private volatile Instant tokenExpiry = Instant.EPOCH;
+
+    public ServiceTokenProvider(
+            WebClient.Builder webClientBuilder,
+            @Value("${retail.checkout.keycloak.token-uri}") String tokenUri,
+            @Value("${retail.checkout.keycloak.client-id}") String clientId,
+            @Value("${retail.checkout.keycloak.client-secret}") String clientSecret) {
+        this.tokenClient = webClientBuilder.baseUrl(tokenUri).build();
+        this.clientId = clientId;
+        this.clientSecret = clientSecret;
+    }
+
+    public String getToken() {
+        if (cachedToken != null && Instant.now().isBefore(tokenExpiry.minusSeconds(30))) {
+            return cachedToken;
+        }
+        return fetchToken();
+    }
+
+    private String fetchToken() {
+        Map<?, ?> response = tokenClient.post()
+            .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+            .body(BodyInserters.fromFormData("grant_type", "client_credentials")
+                .with("client_id", clientId)
+                .with("client_secret", clientSecret))
+            .retrieve()
+            .bodyToMono(Map.class)
+            .block();
+
+        if (response == null || response.get("access_token") == null) {
+            throw new IllegalStateException("Keycloak returned no access_token");
+        }
+        String token = (String) response.get("access_token");
+        Integer expiresIn = (Integer) response.get("expires_in");
+        cachedToken = token;
+        tokenExpiry = Instant.now().plusSeconds(expiresIn != null ? expiresIn : 300);
+        return token;
+    }
+}
+```
+
+```java
+// checkout-service/.../infrastructure/client/OrderServiceClient.java
+@Component
+public class OrderServiceClient {
+
+    private final WebClient.Builder webClientBuilder;
+    private final ServiceTokenProvider serviceTokenProvider;
+
+    @Value("${retail.checkout.endpoints.orders:http://orders}")
+    private String ordersEndpoint;
+
+    public String placeOrder(CheckoutSession session) {
+        WebClient client = webClientBuilder.baseUrl(ordersEndpoint).build();
+        String serviceToken = serviceTokenProvider.getToken();
+
+        Map<String, Object> orderRequest = Map.of(
+            "customerId",        session.getCustomerId(),
+            "checkoutSessionId", session.getSessionId(),
+            "lineItems",         buildLineItems(session),
+            "shippingAddress",   buildShippingAddress(session),
+            "subtotal",          session.getPriceSummary().getSubtotal().toString(),
+            "shippingCost",      session.getPriceSummary().getShippingCost().toString(),
+            "total",             session.getPriceSummary().getTotal().toString()
+        );
+
+        Map<?, ?> response = client.post()
+            .uri("/api/v1/orders")
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + serviceToken)
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(orderRequest)
+            .retrieve()
+            .bodyToMono(Map.class)
+            .block();
+
+        return response != null ? String.valueOf(response.get("id")) : null;
+    }
+}
+```
+
+---
+
+### 6.3 Token caching — both services
+
+| | experience-service | checkout-service |
+|---|---|---|
+| **Return type** | `Mono<String>` (reactive) | `String` (blocking) |
+| **Cache store** | `volatile` field in JVM heap | Same |
+| **Cache lifetime** | Until pod restart or cache expiry | Same |
+| **Expiry buffer** | 30s before actual expiry | Same |
+| **On Keycloak down** | First call fails; retry on next request | Same (throws `IllegalStateException`) |
+| **Thread safety** | `volatile` prevents stale reads; not atomic — rare double-fetch on concurrent miss is harmless | Same |
 
 ---
 
@@ -988,21 +1188,22 @@ cd web-storefront && npm run dev
 
 ### Token Types in This System
 
-| Token | Issued by | Used by | Flow |
+| Token | Issued by | Validated by | Flow |
 |---|---|---|---|
-| User access_token (JWT RS256) | Keycloak | Browser → api-gateway | Authorization Code + PKCE |
-| User refresh_token | Keycloak | Browser → Keycloak | Silent renew |
-| Service access_token (JWT RS256) | Keycloak | experience-svc, checkout-svc → downstream | Client Credentials |
+| User access_token (JWT RS256) | Keycloak | api-gateway (GlobalJwtFilter) + each downstream service Spring Security | Authorization Code + PKCE |
+| User refresh_token | Keycloak | Keycloak only | Silent renew |
+| Service access_token (JWT RS256) | Keycloak | Each downstream service (catalog, cart, orders) via Spring Security + JWKS | Client Credentials |
 
 ### Where Each Concern Lives
 
 | Concern | Location |
 |---|---|
 | Token issuance | Keycloak |
-| Token validation (signature, expiry) | api-gateway (GlobalJwtFilter) |
-| User identity propagation | api-gateway → X-User-* headers |
-| Fine-grained authorization (your data only) | Individual service controllers |
-| Service-to-service auth | OAuth2 Client Credentials (Keycloak) |
+| User token validation (browser requests) | api-gateway `GlobalJwtFilter` — validates RS256 signature + expiry, then injects X-User-* headers |
+| User identity propagation | api-gateway → X-User-* headers forwarded to all downstream services |
+| Service token validation (S2S requests) | Each receiving service independently — Spring Security oauth2ResourceServer fetches JWKS and verifies RS256 signature |
+| Fine-grained authorization (your data only) | Individual service controllers (read X-User-Id / X-User-Role headers) |
+| Service-to-service token acquisition | `ServiceTokenProvider` in experience-service and checkout-service |
 | Rate limiting | api-gateway |
 | CORS | api-gateway |
 | Business aggregation | experience-service (BFF) |

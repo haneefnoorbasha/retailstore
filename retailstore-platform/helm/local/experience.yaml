@@ -1,0 +1,23 @@
+image:
+  repository: "host.docker.internal:5000/retailstore/experience"
+  tag: "local"
+  pullPolicy: IfNotPresent
+replicaCount: 1
+appEnv:
+  SPRING_PROFILES_ACTIVE: "local"
+  RETAIL_EXPERIENCE_ENDPOINTS_CATALOG: "http://catalog:8080"
+  RETAIL_EXPERIENCE_ENDPOINTS_CARTS:   "http://carts:8080"
+  RETAIL_EXPERIENCE_ENDPOINTS_ORDERS:  "http://orders:8080"
+  KEYCLOAK_HOST:          "keycloak"
+  KEYCLOAK_PORT:          "8180"
+  KEYCLOAK_CLIENT_ID:     "experience-service"
+  KEYCLOAK_CLIENT_SECRET: "exp-service-secret"
+  ZIPKIN_HOST:            "zipkin"
+resources:
+  limits:
+    memory: 384Mi
+  requests:
+    cpu: 100m
+    memory: 192Mi
+autoscaling:
+  enabled: false

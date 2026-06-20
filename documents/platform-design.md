@@ -42,7 +42,7 @@
 You are building a **learning project with production standards**. The right model for you is:
 
 ```
-local (default) → dev (k3s on EC2) → stage (AWS EKS minimal) → prod (AWS EKS full HA)
+local (k3s on Rancher Desktop) → dev (k3s on EC2) → stage (AWS EKS minimal) → prod (AWS EKS full HA)
 ```
 
 This mirrors Google/Zalando: same configs, same code, same patterns — only the infra sizing
@@ -61,17 +61,17 @@ gets switched on in local without a documented reason.**
 │                                                                                  │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌───────────────┐  │
 │  │    LOCAL      │    │     DEV       │    │    STAGE      │    │     PROD      │  │
-│  │  (default)    │───►│  (dev)        │───►│  (stage)      │───►│   (prod)      │  │
+│  │  (dev profile)│───►│  (dev profile)│───►│  (stage)      │───►│   (prod)      │  │
 │  │               │    │               │    │               │    │               │  │
-│  │ Java process  │    │ k3s on EC2    │    │ AWS EKS       │    │ AWS EKS       │  │
-│  │ + H2 in-mem   │    │ all services  │    │ minimal size  │    │ full HA size  │  │
-│  │ Keycloak-local│    │ ECR images    │    │               │    │               │  │
+│  │ k3s on Rancher│    │ k3s on EC2    │    │ AWS EKS       │    │ AWS EKS       │  │
+│  │ Desktop (Mac) │    │ all services  │    │ minimal size  │    │ full HA size  │  │
+│  │ Local images  │    │ ECR images    │    │               │    │               │  │
 │  └──────────────┘    └──────────────┘    └──────────────┘    └───────────────┘  │
-│       IDE/mvn           k3s (t3.xlarge)     EKS t3.large        EKS m5.large    │
-│       H2/in-mem         MySQL 8 (Bitnami)   RDS MySQL single-AZ RDS MySQL HA    │
-│       Keycloak-local    Keycloak-k3s        Keycloak-EKS        Keycloak-EKS HA │
-│       No rate limit     Redis rate limit    Redis rate limit    Redis rate limit  │
-│       No observability  Zipkin tracing      Full observability  Full + alerting  │
+│  Rancher Desktop        k3s (t3.xlarge)     EKS t3.large        EKS m5.large    │
+│  MySQL 8 (Bitnami)      MySQL 8 (Bitnami)   RDS MySQL single-AZ RDS MySQL HA    │
+│  Keycloak-k3s           Keycloak-k3s        Keycloak-EKS        Keycloak-EKS HA │
+│  Redis rate limit       Redis rate limit    Redis rate limit    Redis rate limit  │
+│  Zipkin tracing         Zipkin tracing      Full observability  Full + alerting  │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 

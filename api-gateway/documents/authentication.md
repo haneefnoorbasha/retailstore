@@ -76,9 +76,69 @@ public ReactiveJwtDecoder reactiveJwtDecoder() {
 
 ### 2.3 JWKS Caching
 
-`NimbusReactiveJwtDecoder` automatically caches Keycloak's public keys. It re-fetches them
-when a key ID (`kid`) in a token is not found in cache — this handles Keycloak key rotations
-transparently without restarting the gateway.
+Keycloak exposes its RS256 public keys at the JWKS endpoint
+(`/realms/retailstore/protocol/openid-connect/certs`). The gateway uses these keys to verify
+every token's signature — it never holds the private key, only the public one.
+
+**Lifecycle of the cached keys:**
+
+```
+Pod starts
+    │
+    │  No keys fetched yet — the cache is empty.
+    │  NimbusReactiveJwtDecoder is lazy: it does NOT call Keycloak on startup.
+    │
+    ▼
+First incoming request with a JWT
+    │
+    │  Cache miss (empty) → fetch JWKS from Keycloak
+    │  Keycloak returns: [ { kid: "abc123", kty: "RSA", n: "...", e: "AQAB" } ]
+    │  Keys stored in memory (JVM heap) inside the decoder
+    │
+    ▼
+All subsequent requests
+    │
+    │  Token header contains kid: "abc123"
+    │  kid found in cache → use cached public key → verify signature
+    │  No network call to Keycloak — validation is pure in-process math
+    │
+    ▼
+Pod running normally — keys stay cached indefinitely
+    │
+    │  Cache is in-memory only.
+    │  It lives for the entire lifetime of the pod.
+    │  If the pod restarts or crashes, the cache is gone.
+    │  On the next startup the same lazy-fetch happens on the first request.
+    │
+    ▼  (only if Keycloak rotates its signing key)
+Token arrives with kid: "xyz789" — not in cache
+    │
+    │  Cache miss on the new kid → re-fetch JWKS from Keycloak
+    │  New key set loaded into cache (old key may still be in the set too,
+    │  Keycloak keeps previous keys for a grace period)
+    │  Token validated with the new key
+    │
+    ▼
+Back to normal — cache now has both old and new keys
+```
+
+**Key points:**
+
+| Question | Answer |
+|----------|--------|
+| When are keys first fetched? | Lazily — on the first token validation request, not on pod startup |
+| How long do they stay? | For the lifetime of the pod / JVM process |
+| What clears the cache? | Pod restart, crash, or OOM kill — nothing else |
+| What triggers a re-fetch? | A token arrives whose `kid` is not in the current cache (Keycloak key rotation) |
+| Is the cache shared across pods? | No — each pod has its own in-memory cache |
+| What if Keycloak is down at startup? | Pod starts fine; the first token validation fails with a network error until Keycloak is reachable |
+| What if Keycloak is down mid-operation? | Tokens whose `kid` is already cached continue to validate normally; only requests needing a re-fetch will fail |
+
+**Implication for stage/prod (multiple gateway replicas):** Each pod independently fetches
+and caches its own copy of the JWKS. During a Keycloak key rotation, different pods may
+briefly hold different key sets — pods that have already re-fetched will accept new-key tokens
+while others haven't yet. This self-resolves within one request cycle per pod, and Keycloak's
+grace period (keeping old keys active for a while) ensures no tokens are wrongly rejected.
 
 ---
 

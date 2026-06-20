@@ -1,0 +1,28 @@
+image:
+  repository: "host.docker.internal:5000/retailstore/orders"
+  tag: "local"
+  pullPolicy: IfNotPresent
+replicaCount: 1
+appEnv:
+  SPRING_PROFILES_ACTIVE: "local"
+  MYSQL_HOST:     "mysql"
+  MYSQL_PORT:     "3306"
+  MYSQL_USER:     "orders_user"
+  MYSQL_PASSWORD: "orders_pass"
+  RETAIL_ORDER_MESSAGING_ENABLED:  "true"
+  RETAIL_ORDER_MESSAGING_SQS_QUEUE_URL: "http://localstack:4566/000000000000/order-events-dev"
+  SQS_ENDPOINT:          "http://localstack:4566"
+  AWS_ACCESS_KEY_ID:     "dummy"
+  AWS_SECRET_ACCESS_KEY: "dummy"
+  AWS_REGION:            "us-east-1"
+  KEYCLOAK_HOST: "keycloak"
+  KEYCLOAK_PORT: "8180"
+  ZIPKIN_HOST:   "zipkin"
+resources:
+  limits:
+    memory: 384Mi
+  requests:
+    cpu: 100m
+    memory: 192Mi
+autoscaling:
+  enabled: false

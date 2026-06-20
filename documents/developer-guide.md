@@ -1,16 +1,22 @@
 # RetailStore — Developer Guide
 
-> This guide covers the **dev environment** (k3s on EC2). For stage and prod, see the
-> [platform-design.md](platform-design.md) Sections 8, 9, and 11.
+> This guide covers the **local** (Rancher Desktop k3s) and **dev** (EC2 k3s) environments.
+> For stage and prod, see [platform-design.md](platform-design.md) Sections 8, 9, and 11.
+> For the full local k3s setup walkthrough, see [local-k3s-setup.md](local-k3s-setup.md).
 
 ## Environment Quick Reference
 
 | Profile | Infrastructure | How to run | What changes |
 |---|---|---|---|
-| `default` (no profile) | Local machine, H2 in-memory | `mvn spring-boot:run` in IntelliJ | Nothing to set up — works instantly |
-| `dev` | k3s on EC2 (this guide) | `start-dev.sh` + `port-forward.sh` | MySQL, Redis, Keycloak, Zipkin via port-forward |
+| `dev` | k3s on **Rancher Desktop** (local Mac) | `start-local.sh` + `port-forward.sh` | Same as dev EC2 — MySQL, Redis, Keycloak, Zipkin in k3s pods |
+| `dev` | k3s on **EC2** (cloud dev) | `start-dev.sh` + `port-forward.sh` | Same profile, same Helm charts — images from ECR |
 | `stage` | AWS EKS (Terraform required) | GitHub Actions CI → EKS deploy | Replace `# Replace:` vars in `helm/stage/*.yaml` |
 | `prod` | AWS EKS HA (Terraform required) | ArgoCD → EKS canary deploy | Replace `# Replace:` vars in `helm/prod/*.yaml` |
+
+> **Both local and dev use the same `dev` Spring profile.** The only differences are where
+> the images come from (local Docker build vs ECR) and which Helm values file is used
+> (`helm/local/` vs `helm/dev/`). All cluster DNS names, env vars, and application config
+> are identical.
 
 ---
 

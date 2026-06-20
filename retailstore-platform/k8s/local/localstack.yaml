@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: localstack
+  namespace: retailstore
+  labels:
+    app: localstack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: localstack
+  template:
+    metadata:
+      labels:
+        app: localstack
+    spec:
+      containers:
+        - name: localstack
+          image: localstack/localstack:3.5
+          env:
+            - name: SERVICES
+              value: "sqs"
+            - name: DEFAULT_REGION
+              value: "us-east-1"
+            - name: DEBUG
+              value: "0"
+            - name: DYNAMODB_LOCAL_PORT
+              value: "0"
+          ports:
+            - containerPort: 4566
+          readinessProbe:
+            httpGet:
+              path: /_localstack/health
+              port: 4566
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 200m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: localstack
+  namespace: retailstore
+  labels:
+    app: localstack
+spec:
+  type: ClusterIP
+  selector:
+    app: localstack
+  ports:
+    - port: 4566
+      targetPort: 4566
+      name: http
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: localstack-init
+  namespace: retailstore
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-localstack
+          image: curlimages/curl:8.5.0
+          command:
+            - sh
+            - -c
+            - |
+              until curl -sf http://localstack:4566/_localstack/health | grep -q '"sqs"'; do
+                echo "waiting for localstack..."; sleep 5
+              done
+      containers:
+        - name: create-queues
+          image: amazon/aws-cli:2.17.0
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              value: "dummy"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "dummy"
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              aws --endpoint-url=http://localstack:4566 sqs create-queue --queue-name order-events-local || true
+              aws --endpoint-url=http://localstack:4566 sqs create-queue --queue-name order-events-local-dlq || true
+              echo "SQS queues ready"

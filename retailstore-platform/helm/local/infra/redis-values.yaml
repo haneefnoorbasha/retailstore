@@ -1,0 +1,19 @@
+# Bitnami Redis 27.x — local Docker Desktop k8s
+
+architecture: standalone
+
+auth:
+  enabled: false
+
+primary:
+  persistence:
+    size: 512Mi
+  resources:
+    limits:
+      memory: 192Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+metrics:
+  enabled: false

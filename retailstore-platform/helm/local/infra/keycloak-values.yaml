@@ -1,0 +1,62 @@
+# Bitnami Keycloak — local Rancher Desktop
+# Same config as dev — Keycloak needs its memory to run JVM + realm
+
+auth:
+  adminUser: admin
+  adminPassword: admin
+
+postgresql:
+  enabled: false
+
+externalDatabase:
+  host: mysql
+  port: 3306
+  database: keycloakdb
+  user: keycloak_user
+  password: keycloak_pass
+  existingSecret: ""
+
+service:
+  type: ClusterIP
+  ports:
+    http: 8180
+
+httpRelativePath: "/"
+
+extraEnvVars:
+  - name: KC_HTTP_PORT
+    value: "8180"
+  - name: KC_HOSTNAME_STRICT
+    value: "false"
+  - name: KC_HOSTNAME_STRICT_HTTPS
+    value: "false"
+  - name: KC_HTTP_ENABLED
+    value: "true"
+  - name: KC_DB
+    value: "mysql"
+  - name: KC_DB_URL
+    value: "jdbc:mysql://mysql:3306/keycloakdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+  - name: KC_DB_USERNAME
+    value: "keycloak_user"
+  - name: KC_DB_PASSWORD
+    value: "keycloak_pass"
+
+extraArgs: "--import-realm"
+
+extraVolumes:
+  - name: realm-config
+    configMap:
+      name: keycloak-realm
+
+extraVolumeMounts:
+  - name: realm-config
+    mountPath: /opt/keycloak/data/import
+
+resources:
+  limits:
+    memory: 768Mi          # Keycloak JVM needs this — don't reduce
+  requests:
+    cpu: 200m
+    memory: 512Mi
+
+replicaCount: 1

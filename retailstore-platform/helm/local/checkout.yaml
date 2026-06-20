@@ -1,0 +1,27 @@
+image:
+  repository: "host.docker.internal:5000/retailstore/checkout"
+  tag: "local"
+  pullPolicy: IfNotPresent
+replicaCount: 1
+appEnv:
+  SPRING_PROFILES_ACTIVE: "local"
+  REDIS_HOST: "redis-master"
+  REDIS_PORT: "6379"
+  RETAIL_CHECKOUT_ENDPOINTS_ORDERS:           "http://orders:8080"
+  RETAIL_CHECKOUT_SESSION_TTL_MINUTES:        "30"
+  RETAIL_CHECKOUT_TAX_RATE:                   "0.20"
+  RETAIL_CHECKOUT_SHIPPING_COST:              "5.99"
+  RETAIL_CHECKOUT_FREE_SHIPPING_THRESHOLD:    "50.00"
+  KEYCLOAK_HOST:          "keycloak"
+  KEYCLOAK_PORT:          "8180"
+  KEYCLOAK_CLIENT_ID:     "checkout-service"
+  KEYCLOAK_CLIENT_SECRET: "checkout-service-secret"
+  ZIPKIN_HOST:            "zipkin"
+resources:
+  limits:
+    memory: 384Mi
+  requests:
+    cpu: 100m
+    memory: 192Mi
+autoscaling:
+  enabled: false

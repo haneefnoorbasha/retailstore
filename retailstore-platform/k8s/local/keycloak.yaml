@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: retailstore
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.3
+          args:
+            - start-dev
+            - --import-realm
+          env:
+            - name: KEYCLOAK_ADMIN
+              value: "admin"
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              value: "admin"
+            - name: KC_DB
+              value: "mysql"
+            - name: KC_DB_URL
+              value: "jdbc:mysql://mysql:3306/keycloakdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+            - name: KC_DB_USERNAME
+              value: "keycloak_user"
+            - name: KC_DB_PASSWORD
+              value: "keycloak_pass"
+            - name: KC_HTTP_PORT
+              value: "8180"
+            - name: KC_HOSTNAME_STRICT
+              value: "false"
+            - name: KC_HOSTNAME_STRICT_HTTPS
+              value: "false"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+          ports:
+            - containerPort: 8180
+          volumeMounts:
+            - name: realm-config
+              mountPath: /opt/keycloak/data/import
+          resources:
+            limits:
+              memory: 768Mi
+            requests:
+              cpu: 200m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /realms/master
+              port: 8180
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 10
+      volumes:
+        - name: realm-config
+          configMap:
+            name: keycloak-realm
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: retailstore
+spec:
+  selector:
+    app: keycloak
+  ports:
+    - port: 8180
+      targetPort: 8180
