@@ -10,10 +10,9 @@ appEnv:
   RDS_USER: "orders_user"
   # RDS_PASSWORD: injected from Kubernetes Secret
   RETAIL_ORDER_MESSAGING_ENABLED: "true"
-  # Replace: AWS SQS queue URL (e.g. https://sqs.us-east-1.amazonaws.com/123456789012/order-events-stage)
-  RETAIL_ORDER_MESSAGING_SQS_QUEUE_URL: ""
-  SQS_ENDPOINT: ""  # Empty = use AWS SDK default endpoint
-  AWS_REGION: "us-east-1"
+  # Replace: MSK bootstrap servers (e.g. b-1.xxx.kafka.us-east-1.amazonaws.com:9094)
+  KAFKA_BOOTSTRAP_SERVERS: ""
+  RETAIL_ORDER_MESSAGING_KAFKA_TOPIC: "order-events-stage"
   # Replace: Keycloak JWKS URI on EKS
   KEYCLOAK_JWKS_URI: ""
   # Replace: tracing backend endpoint

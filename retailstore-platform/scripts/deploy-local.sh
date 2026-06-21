@@ -39,7 +39,7 @@ deploy_service() {
   local image_name="${rest##*:}"
   local chart="../$dir/chart"
   local values="helm/local/$name.yaml"
-  local image="retailstore/$image_name"
+  local image="host.docker.internal:5000/retailstore/$image_name"
 
   echo "▶ Deploying $name..."
   helm upgrade --install "$name" "$chart" \

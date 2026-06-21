@@ -62,7 +62,7 @@ spec:
             - sh
             - -c
             - |
-              until curl -sf http://dynamodb-local:8000/shell/ > /dev/null 2>&1; do
+              until curl -s -o /dev/null http://dynamodb-local:8000/; do
                 echo "waiting for dynamodb-local..."; sleep 3
               done
       containers:

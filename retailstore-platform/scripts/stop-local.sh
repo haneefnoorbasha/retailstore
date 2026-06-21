@@ -47,8 +47,9 @@ echo "▶ Uninstalling infrastructure..."
 kubectl delete -f k8s/local/keycloak.yaml --ignore-not-found
 kubectl delete -f k8s/local/redis.yaml --ignore-not-found
 kubectl delete -f k8s/local/mysql.yaml --ignore-not-found
-kubectl delete deployment zipkin dynamodb-local localstack -n "$NAMESPACE" --ignore-not-found
-kubectl delete service zipkin dynamodb-local localstack -n "$NAMESPACE" --ignore-not-found
+kubectl delete -f k8s/local/kafka.yaml --ignore-not-found
+kubectl delete deployment zipkin dynamodb-local -n "$NAMESPACE" --ignore-not-found
+kubectl delete service zipkin dynamodb-local -n "$NAMESPACE" --ignore-not-found
 kubectl delete configmap keycloak-realm -n "$NAMESPACE" --ignore-not-found
 kubectl delete pvc -l app=mysql -n "$NAMESPACE" --ignore-not-found
 echo "  ✓ Infrastructure removed"

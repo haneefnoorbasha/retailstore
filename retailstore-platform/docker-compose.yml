@@ -7,10 +7,8 @@
 #                 then run ONE service in IntelliJ with SPRING_PROFILES_ACTIVE=dev
 #
 # Dev replicates stage technology stack:
-#   stage  →  RDS MySQL  | ElastiCache Redis | DynamoDB AWS | SQS AWS | Keycloak EKS
-#   dev    →  MySQL 8    | Redis 7           | DynamoDB Local | LocalStack SQS | Keycloak Docker
-
-version: "3.9"
+#   stage  →  RDS MySQL  | ElastiCache Redis | DynamoDB AWS | MSK Kafka | Keycloak EKS
+#   dev    →  MySQL 8    | Redis 7           | DynamoDB Local | Kafka (KRaft) | Keycloak Docker
 
 networks:
   retailstore:
@@ -89,38 +87,32 @@ services:
       --endpoint-url http://dynamodb-local:8000
     networks: [retailstore]
 
-  localstack:
-    image: localstack/localstack:3.5
-    container_name: localstack
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: kafka
     environment:
-      SERVICES: sqs
-      DEFAULT_REGION: us-east-1
-      DEBUG: "0"
-    ports: ["4566:4566"]
+      KAFKA_NODE_ID: 0
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      # PLAINTEXT_INTERNAL → container-to-container (kafka:9092)
+      # PLAINTEXT_EXTERNAL → IntelliJ on host (localhost:9094)
+      KAFKA_LISTENERS: PLAINTEXT_INTERNAL://:9092,PLAINTEXT_EXTERNAL://:9094,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT_INTERNAL://kafka:9092,PLAINTEXT_EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT,PLAINTEXT_EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+    ports:
+      - "9092:9092"   # internal (container-to-container)
+      - "9094:9094"   # external (IntelliJ → localhost:9094)
     networks: [retailstore]
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health | grep -q '\"sqs\": \"running\"' || exit 1"]
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list 2>/dev/null || exit 1"]
       interval: 10s
-      timeout: 5s
+      timeout: 10s
       retries: 10
-      start_period: 20s
-
-  localstack-init:
-    image: amazon/aws-cli:2.17.0
-    container_name: localstack-init
-    depends_on:
-      localstack:
-        condition: service_healthy
-    environment:
-      AWS_ACCESS_KEY_ID: dummy
-      AWS_SECRET_ACCESS_KEY: dummy
-      AWS_DEFAULT_REGION: us-east-1
-    entrypoint: >
-      /bin/sh -c "
-        aws --endpoint-url=http://localstack:4566 sqs create-queue --queue-name order-events-dev &&
-        aws --endpoint-url=http://localstack:4566 sqs create-queue --queue-name order-events-dev-dlq
-      "
-    networks: [retailstore]
+      start_period: 30s
 
   keycloak:
     image: quay.io/keycloak/keycloak:25.0.6
@@ -288,11 +280,8 @@ services:
       MYSQL_USER: orders_user
       MYSQL_PASSWORD: orders_pass
       RETAIL_ORDER_MESSAGING_ENABLED: "true"
-      RETAIL_ORDER_MESSAGING_SQS_QUEUE_URL: http://localstack:4566/000000000000/order-events-dev
-      AWS_ACCESS_KEY_ID: dummy
-      AWS_SECRET_ACCESS_KEY: dummy
-      AWS_REGION: us-east-1
-      SQS_ENDPOINT: http://localstack:4566
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      RETAIL_ORDER_MESSAGING_KAFKA_TOPIC: order-events-dev
       KEYCLOAK_HOST: keycloak
       KEYCLOAK_PORT: "8180"
       ZIPKIN_HOST: zipkin
@@ -301,8 +290,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      localstack-init:
-        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
       keycloak:
         condition: service_healthy
     healthcheck:

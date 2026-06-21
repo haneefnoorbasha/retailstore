@@ -1,7 +1,7 @@
 #!/bin/bash
 # install-infra-local.sh — Install infrastructure for local Docker Desktop k8s
 #
-# Installs: MySQL, Redis, DynamoDB Local, LocalStack, Zipkin, Keycloak
+# Installs: MySQL, Redis, DynamoDB Local, Kafka, Zipkin, Keycloak
 # Uses plain k8s manifests (k8s/local/) — no Helm/OCI auth required.
 #
 # Usage: ./scripts/install-infra-local.sh
@@ -58,12 +58,12 @@ kubectl wait --for=condition=available deployment/dynamodb-local \
   -n "$NAMESPACE" --timeout=2m
 echo "  ✓ DynamoDB Local ready (dynamodb-local:8000)"
 
-# ── LocalStack (SQS) ─────────────────────────────────────────────────────────
-echo "▶ Installing LocalStack..."
-kubectl apply -f k8s/local/localstack.yaml
-kubectl wait --for=condition=available deployment/localstack \
-  -n "$NAMESPACE" --timeout=2m
-echo "  ✓ LocalStack ready (localstack:4566)"
+# ── Kafka (KRaft) ────────────────────────────────────────────────────────────
+echo "▶ Installing Kafka..."
+kubectl apply -f k8s/local/kafka.yaml
+kubectl wait --for=condition=available deployment/kafka \
+  -n "$NAMESPACE" --timeout=3m
+echo "  ✓ Kafka ready (kafka:9092)"
 
 # ── Zipkin ────────────────────────────────────────────────────────────────────
 echo "▶ Installing Zipkin..."
@@ -95,7 +95,7 @@ echo "  Internal cluster addresses:"
 echo "    MySQL      → mysql:3306"
 echo "    Redis      → redis-master:6379"
 echo "    DynamoDB   → dynamodb-local:8000"
-echo "    LocalStack → localstack:4566"
+echo "    Kafka      → kafka:9092"
 echo "    Keycloak   → keycloak:8180"
 echo "    Zipkin     → zipkin:9411"
 echo ""

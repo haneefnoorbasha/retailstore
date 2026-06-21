@@ -8,8 +8,6 @@
 #
 # All ports are forwarded to localhost so IntelliJ services connect via localhost:*
 
-version: "3.9"
-
 networks:
   retailstore:
     driver: bridge
@@ -75,29 +73,22 @@ services:
       --endpoint-url http://dynamodb-local:8000
     networks: [retailstore]
 
-  localstack:
-    image: localstack/localstack:3.5
-    container_name: localstack
+  kafka:
+    image: bitnami/kafka:3.8
+    container_name: kafka
     environment:
-      SERVICES: sqs
-      DEFAULT_REGION: us-east-1
-    ports: ["4566:4566"]
-    networks: [retailstore]
-
-  localstack-init:
-    image: amazon/aws-cli:2.17.0
-    container_name: localstack-init
-    depends_on: [localstack]
-    environment:
-      AWS_ACCESS_KEY_ID: dummy
-      AWS_SECRET_ACCESS_KEY: dummy
-      AWS_DEFAULT_REGION: us-east-1
-    entrypoint: >
-      /bin/sh -c "
-        sleep 10 &&
-        aws --endpoint-url=http://localstack:4566 sqs create-queue --queue-name order-events-dev &&
-        aws --endpoint-url=http://localstack:4566 sqs create-queue --queue-name order-events-dev-dlq
-      "
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CFG_LISTENERS: PLAINTEXT_INTERNAL://:9092,PLAINTEXT_EXTERNAL://:9094,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT_INTERNAL://kafka:9092,PLAINTEXT_EXTERNAL://localhost:9094
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT,PLAINTEXT_EXTERNAL:PLAINTEXT
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "9092:9092"
+      - "9094:9094"
     networks: [retailstore]
 
   keycloak:
