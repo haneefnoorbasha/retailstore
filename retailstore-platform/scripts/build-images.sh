@@ -13,8 +13,7 @@ SERVICES=(
   "cart-service:carts"
   "checkout-service:checkout"
   "order-service:orders"
-  "identity-service:identity"
-  "experience-service:experience"
+"experience-service:experience"
   "api-gateway:gateway"
 )
 

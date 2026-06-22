@@ -1,14 +1,15 @@
-# RetailStore — DEV environment (docker-compose)
-# Profile: dev  →  SPRING_PROFILES_ACTIVE=dev injected into every service
+# RetailStore — Local environment (docker-compose)
+# Profile: local  →  SPRING_PROFILES_ACTIVE=local injected into every service
 #
 # Two usage modes:
 #   Full stack  : docker compose up --build          (all services + infra)
-#   Infra only  : docker compose -f docker-compose.infra-only.yml up
-#                 then run ONE service in IntelliJ with SPRING_PROFILES_ACTIVE=dev
+#   One service in IntelliJ: docker compose up --no-deps catalog carts ...
+#                            then stop the one service you want to debug and run it in IntelliJ
+#                            with SPRING_PROFILES_ACTIVE=local
 #
-# Dev replicates stage technology stack:
+# Local replicates stage technology stack:
 #   stage  →  RDS MySQL  | ElastiCache Redis | DynamoDB AWS | MSK Kafka | Keycloak EKS
-#   dev    →  MySQL 8    | Redis 7           | DynamoDB Local | Kafka (KRaft) | Keycloak Docker
+#   local  →  MySQL 8.4  | Redis 7           | DynamoDB Local | Kafka (KRaft) | Keycloak Docker
 
 networks:
   retailstore:
@@ -27,7 +28,7 @@ services:
   # ── Infrastructure ──────────────────────────────────────────────────────────
 
   mysql:
-    image: mysql:8.0
+    image: mysql:8.4
     container_name: mysql
     environment:
       MYSQL_ROOT_PASSWORD: rootpass
@@ -115,7 +116,7 @@ services:
       start_period: 30s
 
   keycloak:
-    image: quay.io/keycloak/keycloak:25.0.6
+    image: quay.io/keycloak/keycloak:26.3
     container_name: keycloak
     command: ["start-dev", "--import-realm"]
     environment:
@@ -184,7 +185,7 @@ services:
       dockerfile: Dockerfile
     container_name: catalog
     environment:
-      SPRING_PROFILES_ACTIVE: dev
+      SPRING_PROFILES_ACTIVE: local
       MYSQL_HOST: mysql
       MYSQL_USER: catalog_user
       MYSQL_PASSWORD: catalog_pass
@@ -212,7 +213,7 @@ services:
       dockerfile: Dockerfile
     container_name: carts
     environment:
-      SPRING_PROFILES_ACTIVE: dev
+      SPRING_PROFILES_ACTIVE: local
       RETAIL_CART_DYNAMODB_TABLE_NAME: Carts
       RETAIL_CART_DYNAMODB_ENDPOINT: http://dynamodb-local:8000
       AWS_ACCESS_KEY_ID: dummy
@@ -241,7 +242,7 @@ services:
       dockerfile: Dockerfile
     container_name: checkout
     environment:
-      SPRING_PROFILES_ACTIVE: dev
+      SPRING_PROFILES_ACTIVE: local
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       RETAIL_CHECKOUT_ENDPOINTS_ORDERS: http://orders:8080
@@ -275,7 +276,7 @@ services:
       dockerfile: Dockerfile
     container_name: orders
     environment:
-      SPRING_PROFILES_ACTIVE: dev
+      SPRING_PROFILES_ACTIVE: local
       MYSQL_HOST: mysql
       MYSQL_USER: orders_user
       MYSQL_PASSWORD: orders_pass
@@ -301,13 +302,14 @@ services:
       retries: 10
       start_period: 45s
 
+
   experience:
     build:
       context: ../experience-service
       dockerfile: Dockerfile
     container_name: experience
     environment:
-      SPRING_PROFILES_ACTIVE: dev
+      SPRING_PROFILES_ACTIVE: local
       RETAIL_EXPERIENCE_ENDPOINTS_CATALOG: http://catalog:8080
       RETAIL_EXPERIENCE_ENDPOINTS_CARTS: http://carts:8080
       RETAIL_EXPERIENCE_ENDPOINTS_ORDERS: http://orders:8080
@@ -339,7 +341,7 @@ services:
       dockerfile: Dockerfile
     container_name: gateway
     environment:
-      SPRING_PROFILES_ACTIVE: dev
+      SPRING_PROFILES_ACTIVE: local
       RETAIL_GATEWAY_ROUTES_EXPERIENCE: http://experience:8080
       RETAIL_GATEWAY_ROUTES_CATALOG: http://catalog:8080
       RETAIL_GATEWAY_ROUTES_CARTS: http://carts:8080

@@ -72,8 +72,7 @@ pattern. PROD only tightens non-auth settings on top.
 │  api-gateway (Spring Cloud Gateway)                                          │
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
 │  │  GlobalJwtFilter (order: -3)                                          │  │
-│  │  ├── Skip: /api/v1/identity/**, /actuator/**  ← (no identity service  │  │
-│  │  │         now, but keep skip for any public paths)                    │  │
+│  │  ├── Skip: /actuator/**                                               │  │
 │  │  ├── Extract Bearer token from Authorization header                   │  │
 │  │  ├── Validate: signature (RS256 via JWKS), expiry, issuer, audience   │  │
 │  │  ├── On failure → 401 Unauthorized (short-circuit)                    │  │
@@ -466,7 +465,6 @@ routes:
           name: checkout-cb
           fallbackUri: forward:/fallback/checkout
 
-# Remove identity-service route (Keycloak handles auth directly)
 ```
 
 **application-dev.yml** (gateway):
@@ -1012,11 +1010,6 @@ In dev, client secret is injected directly via Helm values as a plain env var.
 
 ## 10. File Change Inventory
 
-### Files to DELETE
-```
-identity-service/ (entire service — all Java files, pom.xml, Dockerfile, application.yml)
-```
-
 ### Files to CREATE
 ```
 api-gateway/.../config/SecurityConfig.java
@@ -1037,7 +1030,7 @@ retailstore-platform/keycloak/realms/retailstore-realm.json
 ### Files to MODIFY
 ```
 api-gateway/pom.xml                              + oauth2-resource-server dep
-api-gateway/src/main/resources/application.yml  + keycloak config, + checkout route, - identity route
+api-gateway/src/main/resources/application.yml  + keycloak config, + checkout route
 experience-service/pom.xml                       + oauth2-resource-server dep
 experience-service/.../client/CatalogClient.java + service token header
 experience-service/.../client/CartClient.java    + service token header
@@ -1050,7 +1043,7 @@ web-storefront/package.json                      + oidc-client-ts
 web-storefront/src/services/api.ts               + token interceptor
 web-storefront/src/App.tsx                       + callback routes
 web-storefront/src/store/useAppStore.ts          + user state from Keycloak
-retailstore-platform/docker-compose.yml          + keycloak service, - identity service
+retailstore-platform/docker-compose.yml          + keycloak service
 retailstore-platform/helm/dev/gateway.yaml       + keycloak env vars
 retailstore-platform/helm/dev/experience.yaml    + keycloak env vars
 retailstore-platform/helm/dev/orders.yaml        + exception handler (no extra env)
@@ -1225,7 +1218,6 @@ cd web-storefront && npm run dev
 
 | Removed | Why |
 |---|---|
-| `identity-service` | Reimplements OAuth2 from scratch — Keycloak does this better |
 | Shared JWT secret | RS256 asymmetric signing replaces symmetric HMAC — no secret to share |
 | Custom register/login endpoints | Keycloak hosts these with security hardening, MFA, brute-force protection |
 | `UserAccount` JPA entity (as auth entity) | Users live in Keycloak; services only need `sub` (userId) from the token |

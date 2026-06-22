@@ -46,5 +46,5 @@ retail:
   order:
     messaging:
       enabled: ${RETAIL_ORDER_MESSAGING_ENABLED:false}
-      sqs:
-        queue-url: ${RETAIL_ORDER_MESSAGING_SQS_QUEUE_URL:}
+      kafka:
+        topic: ${RETAIL_ORDER_MESSAGING_KAFKA_TOPIC:order-events}

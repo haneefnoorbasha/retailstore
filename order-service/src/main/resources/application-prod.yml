@@ -1,5 +1,4 @@
-# Prod profile — RDS MySQL Multi-AZ + AWS SQS + EKS Keycloak.
-# Swagger disabled. Health details hidden.
+# Prod profile — RDS MySQL Multi-AZ + AWS MSK Kafka (Multi-AZ) + EKS Keycloak.
 
 spring:
   datasource:
@@ -28,13 +27,26 @@ spring:
       resourceserver:
         jwt:
           jwk-set-uri: ${KEYCLOAK_JWKS_URI}
+  kafka:
+    # Replace: MSK bootstrap servers (e.g. b-1.xxx.kafka.us-east-1.amazonaws.com:9094)
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    properties:
+      security.protocol: SSL
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 5
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
 
 retail:
   order:
     messaging:
       enabled: true
-      sqs:
-        queue-url: ${RETAIL_ORDER_MESSAGING_SQS_QUEUE_URL}
+      kafka:
+        topic: order-events-prod
 
 springdoc:
   api-docs:

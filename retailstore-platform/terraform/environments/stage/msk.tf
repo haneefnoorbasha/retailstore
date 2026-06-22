@@ -1,7 +1,33 @@
 # Stage — MSK Kafka (single-AZ, cost-optimised)
 # 2 brokers, kafka.t3.small, placed in two private subnets.
-# Bootstrap servers injected into order-service Helm chart after apply:
-#   KAFKA_BOOTSTRAP_SERVERS = module.msk.bootstrap_brokers_tls
+
+resource "aws_security_group" "msk" {
+  name        = "retailstore-stage-msk-sg"
+  description = "Allow Kafka TLS from EKS nodes"
+  vpc_id      = module.vpc.vpc_id
+
+  ingress {
+    description     = "Kafka TLS from EKS nodes"
+    from_port       = 9094
+    to_port         = 9094
+    protocol        = "tcp"
+    security_groups = [module.eks.cluster_security_group_id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "retailstore-stage-msk-sg"
+    Environment = "stage"
+    Project     = "retailstore"
+    ManagedBy   = "terraform"
+  }
+}
 
 module "msk" {
   source = "../../modules/msk"
@@ -12,14 +38,9 @@ module "msk" {
   instance_type          = "kafka.t3.small"
   ebs_volume_size        = 20
 
-  # Replace: private subnet IDs from the stage VPC (one per broker)
-  subnet_ids = [
-    "",  # e.g. subnet-aaaaaaaa
-    "",  # e.g. subnet-bbbbbbbb
-  ]
+  subnet_ids = slice(module.vpc.private_subnet_ids, 0, 2)
 
-  # Replace: security group that allows port 9094 from EKS node security group
-  security_group_ids = [""]  # e.g. sg-xxxxxxxxxxxxxxxxx
+  security_group_ids = [aws_security_group.msk.id]
 
   replication_factor  = 2
   min_insync_replicas = 1

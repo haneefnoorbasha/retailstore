@@ -3,7 +3,7 @@ image:
   tag: "latest"    # Set via --set image.tag=<GIT_SHA>
 replicaCount: 1
 appEnv:
-  SPRING_PROFILES_ACTIVE: "dev"
+  SPRING_PROFILES_ACTIVE: "local"
   RETAIL_GATEWAY_ROUTES_EXPERIENCE: "http://experience:8080"
   RETAIL_GATEWAY_ROUTES_CATALOG: "http://catalog:8080"
   RETAIL_GATEWAY_ROUTES_CARTS: "http://carts:8080"

@@ -3,7 +3,7 @@ image:
   tag: "latest"
 replicaCount: 1
 appEnv:
-  SPRING_PROFILES_ACTIVE: "dev"
+  SPRING_PROFILES_ACTIVE: "local"
   RETAIL_EXPERIENCE_ENDPOINTS_CATALOG: "http://catalog:8080"
   RETAIL_EXPERIENCE_ENDPOINTS_CARTS: "http://carts:8080"
   RETAIL_EXPERIENCE_ENDPOINTS_ORDERS: "http://orders:8080"

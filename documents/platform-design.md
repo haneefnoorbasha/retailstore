@@ -675,7 +675,7 @@ into K8s Secret objects automatically. Pods read K8s secrets as env vars — no 
 another service's database. This is the most important microservices data principle.
 
 **Industry reality:**
-- Amazon DynamoDB (cart, catalog), RDS (orders, identity), ElastiCache (sessions)
+- Amazon DynamoDB (cart, catalog), RDS (orders), ElastiCache (sessions)
 - Walmart: PostgreSQL + DynamoDB mix, similar to RetailStore
 - Financial: Oracle/DB2 (legacy) or PostgreSQL (modern) per bounded context; strict schema ownership
 
@@ -1527,7 +1527,7 @@ resilience4j:
 ## 11. Implementation Order
 
 ### Phase 1: Auth + Local Profile ✅ DONE
-1. Replace `identity-service` with Keycloak 25
+1. Add Keycloak 25 for authentication (OIDC + Client Credentials)
 2. Add `GlobalJwtFilter` to api-gateway (JWKS validation)
 3. Add `spring-security-oauth2-resource-server` to all 5 services
 4. Add `ServiceTokenProvider` (Client Credentials) to experience-service and checkout-service

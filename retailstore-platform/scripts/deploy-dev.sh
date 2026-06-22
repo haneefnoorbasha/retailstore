@@ -34,7 +34,6 @@ deploy catalog   oci://public.ecr.aws/retailstore/catalog-chart   catalog.yaml
 deploy carts     oci://public.ecr.aws/retailstore/cart-chart      carts.yaml
 deploy checkout  oci://public.ecr.aws/retailstore/checkout-chart  checkout.yaml
 deploy orders    oci://public.ecr.aws/retailstore/order-chart     orders.yaml
-deploy identity  oci://public.ecr.aws/retailstore/identity-chart  identity.yaml
 deploy experience oci://public.ecr.aws/retailstore/experience-chart experience.yaml
 deploy gateway   oci://public.ecr.aws/retailstore/gateway-chart   gateway.yaml
 

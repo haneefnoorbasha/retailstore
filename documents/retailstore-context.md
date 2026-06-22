@@ -23,7 +23,6 @@ Industry patterns: Walmart, Airbnb, Zalando. Java 21, Spring Boot 3.3, Spring Cl
 | cart-service | Shopping cart. Merge-on-duplicate logic. | Spring Boot, DynamoDB Enhanced Client | DynamoDB |
 | checkout-service | Checkout session. Pricing: subtotal+shipping+tax. Calls order-service on submit. | Spring Boot, Redis | ElastiCache Redis |
 | order-service | Order lifecycle. 7 statuses. SQS events. | Spring Boot, JPA, SQS | H2 (dev) / RDS PostgreSQL (prod) |
-| identity-service | Register, login, JWT (jjwt), BCrypt, profiles | Spring Boot, Spring Security | H2 (dev) / RDS PostgreSQL (prod) |
 | retailstore-platform | Docker Compose, Helm overrides, scripts | Helm 3, Docker | — |
 
 ### Request Flow (LOCKED — do not change)
@@ -38,7 +37,7 @@ api-gateway (Spring Cloud Gateway — JWT, rate-limit, routing)
     ↓ routes /api/v1/experience/** 
 experience-service (BFF — Mono.zip parallel calls, X-Client-Channel shaping)
     ↓ parallel WebClient
-catalog  ·  cart  ·  checkout  ·  orders  ·  identity
+catalog  ·  cart  ·  checkout  ·  orders
 ```
 
 ### Gateway Decision (LOCKED)
@@ -82,7 +81,7 @@ com.retailstore.{service}/
 
 ### Naming Conventions (LOCKED)
 - API paths: /api/v1/{domain}/ — always versioned
-- K8s service names: catalog, carts, checkout, orders, identity, experience, gateway
+- K8s service names: catalog, carts, checkout, orders, experience, gateway
 - Docker container names match K8s service names
 - Java packages: com.retailstore.{service}.{layer}.{sublayer}
 - Env vars: RETAIL_{SERVICE}_{CATEGORY}_{KEY}
@@ -131,14 +130,6 @@ com.retailstore.{service}/
 - Order statuses: PENDING → CONFIRMED → PROCESSING → SHIPPED → DELIVERED | CANCELLED | REFUNDED
 - SQS events: ORDER_PLACED, ORDER_CANCELLED (non-fatal if SQS unavailable)
 
-### identity-service
-- POST /api/v1/identity/register — register account, returns JWT
-- POST /api/v1/identity/login — login with email+password, returns JWT
-- GET /api/v1/identity/profile/{userId} — get profile
-- POST /api/v1/identity/refresh/{userId} — refresh JWT
-- JWT contains: sub(userId), email, username, fullName, role
-- BCrypt strength 12. Token expiry 24h default.
-
 ### experience-service (BFF)
 - GET /api/v1/experience/homepage?customerId={id}&featuredCount={n} — parallel: catalog products + tags + cart badge count
 - GET /api/v1/experience/products/{id} — product detail (mobile: lean fields only)
@@ -150,7 +141,6 @@ com.retailstore.{service}/
 - /api/v1/catalog/** → catalog-service (rate-limit: 200/s per IP)
 - /api/v1/carts/** → cart-service (circuit breaker only)
 - /api/v1/orders/** → order-service (circuit breaker only)
-- /api/v1/identity/** → identity-service (NO rate-limit — login/register paths)
 - Global CORS: configured for web-storefront origin
 - Filters: CorrelationIdFilter (X-Correlation-Id), RequestLoggingFilter (method/path/status/duration)
 
@@ -166,7 +156,7 @@ com.retailstore.{service}/
 ## WHAT IS NOT YET BUILT (open tasks for Claude Code)
 
 1. Helm charts — only catalog-service has a complete chart/. All others have empty chart/templates/ directories.
-   - Need: cart, checkout, order, identity, experience, gateway — same pattern as catalog-service/chart/
+   - Need: cart, checkout, order, experience, gateway — same pattern as catalog-service/chart/
    - Pattern: Chart.yaml, values.yaml, templates/_helpers.tpl, deployment.yaml, service.yaml, configmap.yaml, serviceaccount.yaml, hpa.yaml
 
 2. Terraform infrastructure — retailstore-platform/terraform/ is empty.
@@ -179,8 +169,8 @@ com.retailstore.{service}/
    - Use Mockito, no Spring context (@ExtendWith(MockitoExtension.class))
 
 4. api-gateway JWT validation filter — GatewayApplication exists but no JWT filter yet.
-   - Need: GlobalJwtFilter that validates Bearer token using same secret as identity-service
-   - Skip: /api/v1/identity/register, /api/v1/identity/login, /actuator/**
+   - Need: GlobalJwtFilter that validates Bearer token (Keycloak-issued JWT)
+   - Skip: /actuator/**
 
 5. order-service GlobalExceptionHandler and SqsConfig bean — missing from order-service.
 
@@ -226,15 +216,6 @@ RETAIL_ORDER_MESSAGING_ENABLED=false|true
 RETAIL_ORDER_MESSAGING_SQS_QUEUE_URL=https://sqs...
 SPRING_PROFILES_ACTIVE=postgres  (for RDS)
 
-### identity-service
-RETAIL_IDENTITY_JWT_SECRET=base64-encoded-32-byte-minimum
-RETAIL_IDENTITY_JWT_EXPIRATION_MS=86400000
-RETAIL_IDENTITY_DB_ENDPOINT=host:port
-RETAIL_IDENTITY_DB_NAME=identitydb
-RETAIL_IDENTITY_DB_USER=identity_user
-RETAIL_IDENTITY_DB_PASSWORD=secret
-SPRING_PROFILES_ACTIVE=postgres  (for RDS)
-
 ### experience-service
 RETAIL_EXPERIENCE_ENDPOINTS_CATALOG=http://catalog
 RETAIL_EXPERIENCE_ENDPOINTS_CARTS=http://carts
@@ -245,7 +226,6 @@ RETAIL_GATEWAY_ROUTES_EXPERIENCE=http://experience
 RETAIL_GATEWAY_ROUTES_CATALOG=http://catalog
 RETAIL_GATEWAY_ROUTES_CARTS=http://carts
 RETAIL_GATEWAY_ROUTES_ORDERS=http://orders
-RETAIL_GATEWAY_ROUTES_IDENTITY=http://identity
 REDIS_HOST=localhost
 REDIS_PORT=6379
 ALLOWED_ORIGIN=https://shop.retailstore.com
@@ -255,7 +235,7 @@ ALLOWED_ORIGIN=https://shop.retailstore.com
 ## LOCAL DEV
 
 Start everything:
-  cd retailstore-platform && ./scripts/local-dev.sh up
+  cd retailstore-platform && docker compose up --build
 
 Ports:
   8080 api-gateway (single entry point)
@@ -263,12 +243,10 @@ Ports:
   8082 cart-service
   8083 checkout-service
   8084 order-service
-  8085 identity-service
   8086 experience-service
   8000 dynamodb-local
   6379 redis
   5432 postgres-orders
-  5433 postgres-identity
 
 Frontend:
   cd web-storefront && npm install && npm run dev → http://localhost:3000
@@ -278,7 +256,6 @@ Swagger UIs:
   http://localhost:8082/swagger-ui.html (cart)
   http://localhost:8083/swagger-ui.html (checkout)
   http://localhost:8084/swagger-ui.html (order)
-  http://localhost:8085/swagger-ui.html (identity)
   http://localhost:8086/swagger-ui.html (experience)
 
 ---
@@ -4013,679 +3990,6 @@ public class OrderController {
 
 ---
 
-## SOURCE: identity-service
-
-
-### `identity-service/pom.xml`
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-  <modelVersion>4.0.0</modelVersion>
-  <parent><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-parent</artifactId><version>3.3.4</version></parent>
-  <groupId>com.retailstore</groupId><artifactId>identity-service</artifactId><version>1.0.0</version>
-  <name>identity-service</name>
-  <description>RetailStore — Identity domain: registration, login, JWT tokens, user profiles</description>
-  <properties>
-    <java.version>21</java.version>
-    <lombok.version>1.18.34</lombok.version>
-    <springdoc.version>2.6.0</springdoc.version>
-    <jjwt.version>0.12.6</jjwt.version>
-  </properties>
-  <dependencies>
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-jpa</artifactId></dependency>
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-security</artifactId></dependency>
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-actuator</artifactId></dependency>
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-validation</artifactId></dependency>
-    <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><scope>runtime</scope></dependency>
-    <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>runtime</scope></dependency>
-    <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-api</artifactId><version>${jjwt.version}</version></dependency>
-    <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-impl</artifactId><version>${jjwt.version}</version><scope>runtime</scope></dependency>
-    <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-jackson</artifactId><version>${jjwt.version}</version><scope>runtime</scope></dependency>
-    <dependency><groupId>org.springdoc</groupId><artifactId>springdoc-openapi-starter-webmvc-ui</artifactId><version>${springdoc.version}</version></dependency>
-    <dependency><groupId>io.micrometer</groupId><artifactId>micrometer-registry-prometheus</artifactId></dependency>
-    <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><optional>true</optional></dependency>
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
-    <dependency><groupId>org.springframework.security</groupId><artifactId>spring-security-test</artifactId><scope>test</scope></dependency>
-  </dependencies>
-  <build>
-    <plugins>
-      <plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin>
-      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId>
-        <configuration><source>${java.version}</source><target>${java.version}</target>
-          <annotationProcessorPaths><path><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><version>${lombok.version}</version></path></annotationProcessorPaths>
-        </configuration></plugin>
-    </plugins>
-  </build>
-</project>
-
-```
-
-### `identity-service/Dockerfile`
-
-```
-FROM eclipse-temurin:21-jdk-alpine AS builder
-WORKDIR /build
-COPY pom.xml .
-COPY src ./src
-RUN --mount=type=cache,target=/root/.m2 ./mvnw -B clean package -DskipTests -q
-
-FROM eclipse-temurin:21-jre-alpine AS runtime
-WORKDIR /app
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-COPY --from=builder /build/target/identity-service-*.jar app.jar
-RUN chown appuser:appgroup app.jar
-USER appuser
-EXPOSE 8080
-ENTRYPOINT ["java","-XX:+UseContainerSupport","-XX:MaxRAMPercentage=75.0","-XX:+ExitOnOutOfMemoryError","-jar","app.jar"]
-
-```
-
-### `identity-service/src/main/resources/application.yml`
-
-```yaml
-server:
-  port: 8080
-  shutdown: graceful
-spring:
-  application:
-    name: identity-service
-  lifecycle:
-    timeout-per-shutdown-phase: 30s
-  datasource:
-    url: jdbc:h2:mem:identitydb;DB_CLOSE_DELAY=-1
-    driver-class-name: org.h2.Driver
-    username: sa
-    password: ""
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: false
-    open-in-view: false
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info,metrics,prometheus
-  endpoint:
-    health:
-      show-details: always
-      probes:
-        enabled: true
-  health:
-    livenessstate:
-      enabled: true
-    readinessstate:
-      enabled: true
-logging:
-  level:
-    com.retailstore: INFO
-retail:
-  identity:
-    jwt:
-      secret: ${RETAIL_IDENTITY_JWT_SECRET:bXlzdXBlcnNlY3JldGtleW15c3VwZXJzZWNyZXRrZXlteXN1cGVyc2VjcmV0a2V5bXlzdXBlcg==}
-      expiration-ms: ${RETAIL_IDENTITY_JWT_EXPIRATION_MS:86400000}
-
-```
-
-### `identity-service/src/main/resources/application-postgres.yml`
-
-```yaml
-spring:
-  datasource:
-    url: jdbc:postgresql://${RETAIL_IDENTITY_DB_ENDPOINT}/${RETAIL_IDENTITY_DB_NAME:identitydb}
-    username: ${RETAIL_IDENTITY_DB_USER:identity_user}
-    password: ${RETAIL_IDENTITY_DB_PASSWORD}
-    driver-class-name: org.postgresql.Driver
-    hikari:
-      minimum-idle: 2
-      maximum-pool-size: 20
-      pool-name: IdentityHikariPool
-  jpa:
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/IdentityApplication.java`
-
-```java
-package com.retailstore.identity;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-@SpringBootApplication
-public class IdentityApplication {
-    public static void main(String[] args) { SpringApplication.run(IdentityApplication.class, args); }
-}
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/domain/model/UserRole.java`
-
-```java
-package com.retailstore.identity.domain.model;
-public enum UserRole { CUSTOMER, ADMIN, SUPPORT }
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/domain/model/UserAccount.java`
-
-```java
-package com.retailstore.identity.domain.model;
-
-import jakarta.persistence.*;
-import lombok.*;
-import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UpdateTimestamp;
-import java.time.Instant;
-import java.util.Collection;
-import java.util.List;
-
-@Entity
-@Table(name = "user_accounts",
-       indexes = {
-           @Index(name = "idx_user_email",    columnList = "email",    unique = true),
-           @Index(name = "idx_user_username", columnList = "username", unique = true)
-       })
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
-public class UserAccount {
-
-    @Id
-    @Column(length = 36)
-    private String id;
-
-    @Column(unique = true, nullable = false, length = 100)
-    private String email;
-
-    @Column(unique = true, nullable = false, length = 50)
-    private String username;
-
-    @Column(nullable = false)
-    private String passwordHash;
-
-    @Column(nullable = false, length = 80)
-    private String fullName;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
-    @Builder.Default
-    private UserRole role = UserRole.CUSTOMER;
-
-    @Column(nullable = false)
-    @Builder.Default
-    private boolean enabled = true;
-
-    @Column(nullable = false)
-    @Builder.Default
-    private boolean emailVerified = false;
-
-    @CreationTimestamp private Instant createdAt;
-    @UpdateTimestamp  private Instant updatedAt;
-
-    public boolean isActive() { return enabled; }
-}
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/domain/exception/UserNotFoundException.java`
-
-```java
-package com.retailstore.identity.domain.exception;
-public class UserNotFoundException extends RuntimeException {
-    public UserNotFoundException(String msg) { super(msg); }
-}
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/domain/exception/UserAlreadyExistsException.java`
-
-```java
-package com.retailstore.identity.domain.exception;
-public class UserAlreadyExistsException extends RuntimeException {
-    public UserAlreadyExistsException(String field, String value) {
-        super("User already exists with " + field + ": " + value);
-    }
-}
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/domain/exception/InvalidCredentialsException.java`
-
-```java
-package com.retailstore.identity.domain.exception;
-public class InvalidCredentialsException extends RuntimeException {
-    public InvalidCredentialsException() { super("Invalid email or password"); }
-}
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/infrastructure/persistence/UserAccountRepository.java`
-
-```java
-package com.retailstore.identity.infrastructure.persistence;
-
-import com.retailstore.identity.domain.model.UserAccount;
-import org.springframework.data.jpa.repository.JpaRepository;
-import java.util.Optional;
-
-public interface UserAccountRepository extends JpaRepository<UserAccount, String> {
-    Optional<UserAccount> findByEmail(String email);
-    Optional<UserAccount> findByUsername(String username);
-    boolean existsByEmail(String email);
-    boolean existsByUsername(String username);
-}
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/infrastructure/security/JwtTokenProvider.java`
-
-```java
-package com.retailstore.identity.infrastructure.security;
-
-import com.retailstore.identity.domain.model.UserAccount;
-import io.jsonwebtoken.*;
-import io.jsonwebtoken.security.Keys;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
-import javax.crypto.SecretKey;
-import java.util.Base64;
-import java.util.Date;
-
-/**
- * Issues and validates JWT tokens.
- * Token contains: sub (userId), email, username, role — enough for downstream services
- * to authorise without calling identity-service on every request.
- */
-@Slf4j
-@Component
-public class JwtTokenProvider {
-
-    private final SecretKey signingKey;
-    private final long expirationMs;
-
-    public JwtTokenProvider(
-            @Value("${retail.identity.jwt.secret}") String secret,
-            @Value("${retail.identity.jwt.expiration-ms:86400000}") long expirationMs) {
-        byte[] keyBytes = Base64.getDecoder().decode(secret);
-        this.signingKey = Keys.hmacShaKeyFor(keyBytes);
-        this.expirationMs = expirationMs;
-    }
-
-    public String generateToken(UserAccount user) {
-        Date now    = new Date();
-        Date expiry = new Date(now.getTime() + expirationMs);
-
-        return Jwts.builder()
-            .subject(user.getId())
-            .claim("email",    user.getEmail())
-            .claim("username", user.getUsername())
-            .claim("fullName", user.getFullName())
-            .claim("role",     user.getRole().name())
-            .issuedAt(now)
-            .expiration(expiry)
-            .signWith(signingKey)
-            .compact();
-    }
-
-    public Claims validateAndParse(String token) {
-        return Jwts.parser()
-            .verifyWith(signingKey)
-            .build()
-            .parseSignedClaims(token)
-            .getPayload();
-    }
-
-    public boolean isValid(String token) {
-        try {
-            validateAndParse(token);
-            return true;
-        } catch (JwtException | IllegalArgumentException e) {
-            log.debug("Invalid JWT token: {}", e.getMessage());
-            return false;
-        }
-    }
-}
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/infrastructure/config/SecurityConfig.java`
-
-```java
-package com.retailstore.identity.infrastructure.config;
-
-import org.springframework.context.annotation.*;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.web.SecurityFilterChain;
-
-@Configuration
-@EnableWebSecurity
-public class SecurityConfig {
-
-    @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-        http
-            .csrf(csrf -> csrf.disable())
-            .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers(
-                    "/api/v1/identity/register",
-                    "/api/v1/identity/login",
-                    "/actuator/**",
-                    "/swagger-ui/**",
-                    "/api-docs/**"
-                ).permitAll()
-                .anyRequest().authenticated()
-            );
-        return http.build();
-    }
-
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder(12);
-    }
-}
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/api/rest/v1/dto/RegisterRequest.java`
-
-```java
-package com.retailstore.identity.api.rest.v1.dto;
-
-import jakarta.validation.constraints.*;
-import lombok.*;
-
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor
-public class RegisterRequest {
-    @NotBlank @Email(message = "Must be a valid email")
-    private String email;
-
-    @NotBlank @Size(min = 3, max = 50, message = "Username must be 3-50 characters")
-    private String username;
-
-    @NotBlank @Size(min = 8, message = "Password must be at least 8 characters")
-    private String password;
-
-    @NotBlank @Size(max = 80)
-    private String fullName;
-}
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/api/rest/v1/dto/LoginRequest.java`
-
-```java
-package com.retailstore.identity.api.rest.v1.dto;
-
-import jakarta.validation.constraints.NotBlank;
-import lombok.*;
-
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor
-public class LoginRequest {
-    @NotBlank private String email;
-    @NotBlank private String password;
-}
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/api/rest/v1/dto/AuthResponse.java`
-
-```java
-package com.retailstore.identity.api.rest.v1.dto;
-
-import lombok.*;
-
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
-public class AuthResponse {
-    private String accessToken;
-    private String tokenType;
-    private long expiresIn;
-    private UserProfileResponse user;
-}
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/api/rest/v1/dto/UserProfileResponse.java`
-
-```java
-package com.retailstore.identity.api.rest.v1.dto;
-
-import lombok.*;
-import java.time.Instant;
-
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
-public class UserProfileResponse {
-    private String id;
-    private String email;
-    private String username;
-    private String fullName;
-    private String role;
-    private boolean emailVerified;
-    private Instant createdAt;
-}
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/application/service/IdentityService.java`
-
-```java
-package com.retailstore.identity.application.service;
-
-import com.retailstore.identity.api.rest.v1.dto.*;
-import com.retailstore.identity.domain.exception.*;
-import com.retailstore.identity.domain.model.UserAccount;
-import com.retailstore.identity.infrastructure.persistence.UserAccountRepository;
-import com.retailstore.identity.infrastructure.security.JwtTokenProvider;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import java.util.UUID;
-
-@Slf4j
-@Service
-@RequiredArgsConstructor
-@Transactional(readOnly = true)
-public class IdentityService {
-
-    private final UserAccountRepository userRepository;
-    private final JwtTokenProvider jwtTokenProvider;
-    private final PasswordEncoder passwordEncoder;
-
-    @Value("${retail.identity.jwt.expiration-ms:86400000}")
-    private long expirationMs;
-
-    @Transactional
-    public AuthResponse register(RegisterRequest request) {
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new UserAlreadyExistsException("email", request.getEmail());
-        }
-        if (userRepository.existsByUsername(request.getUsername())) {
-            throw new UserAlreadyExistsException("username", request.getUsername());
-        }
-
-        UserAccount user = UserAccount.builder()
-            .id(UUID.randomUUID().toString())
-            .email(request.getEmail().toLowerCase().trim())
-            .username(request.getUsername().trim())
-            .passwordHash(passwordEncoder.encode(request.getPassword()))
-            .fullName(request.getFullName().trim())
-            .build();
-
-        UserAccount saved = userRepository.save(user);
-        log.info("New user registered: id={} email={}", saved.getId(), saved.getEmail());
-
-        String token = jwtTokenProvider.generateToken(saved);
-        return buildAuthResponse(saved, token);
-    }
-
-    public AuthResponse login(LoginRequest request) {
-        UserAccount user = userRepository.findByEmail(request.getEmail().toLowerCase().trim())
-            .orElseThrow(InvalidCredentialsException::new);
-
-        if (!user.isActive()) {
-            throw new InvalidCredentialsException();
-        }
-
-        if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
-            log.warn("Failed login attempt for email={}", request.getEmail());
-            throw new InvalidCredentialsException();
-        }
-
-        String token = jwtTokenProvider.generateToken(user);
-        log.info("User logged in: id={} email={}", user.getId(), user.getEmail());
-        return buildAuthResponse(user, token);
-    }
-
-    public UserProfileResponse getProfile(String userId) {
-        UserAccount user = userRepository.findById(userId)
-            .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
-        return toProfileResponse(user);
-    }
-
-    public AuthResponse refreshToken(String userId) {
-        UserAccount user = userRepository.findById(userId)
-            .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
-        String token = jwtTokenProvider.generateToken(user);
-        return buildAuthResponse(user, token);
-    }
-
-    private AuthResponse buildAuthResponse(UserAccount user, String token) {
-        return AuthResponse.builder()
-            .accessToken(token)
-            .tokenType("Bearer")
-            .expiresIn(expirationMs / 1000)
-            .user(toProfileResponse(user))
-            .build();
-    }
-
-    private UserProfileResponse toProfileResponse(UserAccount u) {
-        return UserProfileResponse.builder()
-            .id(u.getId()).email(u.getEmail()).username(u.getUsername())
-            .fullName(u.getFullName()).role(u.getRole().name())
-            .emailVerified(u.isEmailVerified()).createdAt(u.getCreatedAt())
-            .build();
-    }
-}
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/api/rest/v1/controller/IdentityController.java`
-
-```java
-package com.retailstore.identity.api.rest.v1.controller;
-
-import com.retailstore.identity.api.rest.v1.dto.*;
-import com.retailstore.identity.application.service.IdentityService;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
-import org.springframework.http.*;
-import org.springframework.web.bind.annotation.*;
-
-@RestController
-@RequestMapping("/api/v1/identity")
-@RequiredArgsConstructor
-@Tag(name = "Identity", description = "Registration, login, JWT tokens, user profiles")
-public class IdentityController {
-
-    private final IdentityService identityService;
-
-    @PostMapping("/register")
-    @Operation(summary = "Register a new customer account")
-    public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(identityService.register(request));
-    }
-
-    @PostMapping("/login")
-    @Operation(summary = "Login with email and password — returns JWT")
-    public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
-        return ResponseEntity.ok(identityService.login(request));
-    }
-
-    @GetMapping("/profile/{userId}")
-    @Operation(summary = "Get user profile by ID")
-    public ResponseEntity<UserProfileResponse> getProfile(@PathVariable String userId) {
-        return ResponseEntity.ok(identityService.getProfile(userId));
-    }
-
-    @PostMapping("/refresh/{userId}")
-    @Operation(summary = "Refresh JWT token for a user")
-    public ResponseEntity<AuthResponse> refresh(@PathVariable String userId) {
-        return ResponseEntity.ok(identityService.refreshToken(userId));
-    }
-}
-
-```
-
-### `identity-service/src/main/java/com/retailstore/identity/api/rest/v1/controller/GlobalExceptionHandler.java`
-
-```java
-package com.retailstore.identity.api.rest.v1.controller;
-
-import com.retailstore.identity.domain.exception.*;
-import jakarta.servlet.http.HttpServletRequest;
-import lombok.Builder;
-import lombok.Getter;
-import org.springframework.http.*;
-import org.springframework.web.bind.annotation.*;
-import java.time.Instant;
-
-@RestControllerAdvice
-public class GlobalExceptionHandler {
-
-    @ExceptionHandler(UserNotFoundException.class)
-    @ResponseStatus(HttpStatus.NOT_FOUND)
-    public ErrorResponse handleNotFound(UserNotFoundException ex, HttpServletRequest req) {
-        return error(404, "Not Found", ex.getMessage(), req.getRequestURI());
-    }
-
-    @ExceptionHandler(UserAlreadyExistsException.class)
-    @ResponseStatus(HttpStatus.CONFLICT)
-    public ErrorResponse handleConflict(UserAlreadyExistsException ex, HttpServletRequest req) {
-        return error(409, "Conflict", ex.getMessage(), req.getRequestURI());
-    }
-
-    @ExceptionHandler(InvalidCredentialsException.class)
-    @ResponseStatus(HttpStatus.UNAUTHORIZED)
-    public ErrorResponse handleUnauthorized(InvalidCredentialsException ex, HttpServletRequest req) {
-        return error(401, "Unauthorized", ex.getMessage(), req.getRequestURI());
-    }
-
-    @ExceptionHandler(Exception.class)
-    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
-    public ErrorResponse handleGeneral(Exception ex, HttpServletRequest req) {
-        return error(500, "Internal Server Error", "An unexpected error occurred", req.getRequestURI());
-    }
-
-    private ErrorResponse error(int status, String error, String message, String path) {
-        return ErrorResponse.builder().status(status).error(error)
-            .message(message).path(path).timestamp(Instant.now()).build();
-    }
-
-    @Getter @Builder
-    public static class ErrorResponse {
-        private int status; private String error;
-        private String message; private String path; private Instant timestamp;
-    }
-}
-
-```
-
----
-
 ## SOURCE: experience-service
 
 
@@ -5334,7 +4638,6 @@ networks:
 volumes:
   postgres-catalog:
   postgres-orders:
-  postgres-identity:
   dynamodb-data:
   redis-data:
 
@@ -5397,22 +4700,6 @@ services:
     networks: [retailstore]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U orders_user -d ordersdb"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  postgres-identity:
-    image: postgres:16-alpine
-    container_name: postgres-identity
-    environment:
-      POSTGRES_DB: identitydb
-      POSTGRES_USER: identity_user
-      POSTGRES_PASSWORD: identity_pass
-    ports: ["5433:5432"]
-    volumes: [postgres-identity:/var/lib/postgresql/data]
-    networks: [retailstore]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U identity_user -d identitydb"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -5508,30 +4795,6 @@ services:
       retries: 10
       start_period: 30s
 
-  identity:
-    build:
-      context: ../identity-service
-      dockerfile: Dockerfile
-    container_name: identity
-    environment:
-      SPRING_PROFILES_ACTIVE: postgres
-      RETAIL_IDENTITY_DB_ENDPOINT: postgres-identity:5432
-      RETAIL_IDENTITY_DB_NAME: identitydb
-      RETAIL_IDENTITY_DB_USER: identity_user
-      RETAIL_IDENTITY_DB_PASSWORD: identity_pass
-      RETAIL_IDENTITY_JWT_SECRET: bXlzdXBlcnNlY3JldGtleW15c3VwZXJzZWNyZXRrZXlteXN1cGVyc2VjcmV0a2V5bXlzdXBlcg==
-    ports: ["8085:8080"]
-    networks: [retailstore]
-    depends_on:
-      postgres-identity:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/actuator/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-
   experience:
     build:
       context: ../experience-service
@@ -5567,7 +4830,6 @@ services:
       RETAIL_GATEWAY_ROUTES_CATALOG: http://catalog:8080
       RETAIL_GATEWAY_ROUTES_CARTS: http://carts:8080
       RETAIL_GATEWAY_ROUTES_ORDERS: http://orders:8080
-      RETAIL_GATEWAY_ROUTES_IDENTITY: http://identity:8080
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       ALLOWED_ORIGIN: http://localhost:3000
@@ -5575,8 +4837,6 @@ services:
     networks: [retailstore]
     depends_on:
       experience:
-        condition: service_healthy
-      identity:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/actuator/health || exit 1"]
@@ -5591,58 +4851,6 @@ services:
 
 ## INFRA: retailstore-platform — scripts
 
-
-### `retailstore-platform/scripts/local-dev.sh`
-
-```bash
-#!/bin/bash
-# Start the full RetailStore stack locally using Docker Compose
-# Run from: retailstore-platform/
-
-set -e
-cd "$(dirname "$0")/.."
-
-echo "================================================"
-echo "  RetailStore — Local Dev Stack"
-echo "================================================"
-
-case "${1:-up}" in
-  up)
-    echo "Starting all services..."
-    docker compose up --build -d
-    echo ""
-    echo "Services starting... Waiting for health checks..."
-    sleep 15
-    docker compose ps
-    echo ""
-    echo "API Gateway:        http://localhost:8080"
-    echo "Catalog Service:    http://localhost:8081/swagger-ui.html"
-    echo "Cart Service:       http://localhost:8082/swagger-ui.html"
-    echo "Checkout Service:   http://localhost:8083/swagger-ui.html"
-    echo "Order Service:      http://localhost:8084/swagger-ui.html"
-    echo "Identity Service:   http://localhost:8085/swagger-ui.html"
-    echo "Experience Service: http://localhost:8086/swagger-ui.html"
-    echo ""
-    echo "Start the React frontend:"
-    echo "  cd web-storefront && npm install && npm run dev"
-    echo "  → http://localhost:3000"
-    ;;
-  down)
-    docker compose down
-    ;;
-  logs)
-    docker compose logs -f "${2:-}"
-    ;;
-  restart)
-    docker compose restart "${2:-}"
-    ;;
-  *)
-    echo "Usage: $0 [up|down|logs|restart] [service]"
-    exit 1
-    ;;
-esac
-
-```
 
 ### `retailstore-platform/scripts/deploy-dev.sh`
 
@@ -5683,7 +4891,6 @@ deploy catalog   oci://public.ecr.aws/retailstore/catalog-chart   catalog.yaml
 deploy carts     oci://public.ecr.aws/retailstore/cart-chart      carts.yaml
 deploy checkout  oci://public.ecr.aws/retailstore/checkout-chart  checkout.yaml
 deploy orders    oci://public.ecr.aws/retailstore/order-chart     orders.yaml
-deploy identity  oci://public.ecr.aws/retailstore/identity-chart  identity.yaml
 deploy experience oci://public.ecr.aws/retailstore/experience-chart experience.yaml
 deploy gateway   oci://public.ecr.aws/retailstore/gateway-chart   gateway.yaml
 
@@ -5713,7 +4920,6 @@ SERVICES=(
   "cart-service:carts"
   "checkout-service:checkout"
   "order-service:orders"
-  "identity-service:identity"
   "experience-service:experience"
   "api-gateway:gateway"
 )
@@ -5836,29 +5042,6 @@ autoscaling:
 
 ```
 
-### `retailstore-platform/helm/dev/identity.yaml`
-
-```yaml
-image:
-  repository: ""
-  tag: "latest"
-replicaCount: 1
-appEnv:
-  SPRING_PROFILES_ACTIVE: "postgres"
-  RETAIL_IDENTITY_DB_ENDPOINT: "postgres-identity:5432"
-  RETAIL_IDENTITY_DB_NAME: "identitydb"
-  RETAIL_IDENTITY_DB_USER: "identity_user"
-resources:
-  limits:
-    memory: 512Mi
-  requests:
-    cpu: 100m
-    memory: 256Mi
-autoscaling:
-  enabled: false
-
-```
-
 ### `retailstore-platform/helm/dev/experience.yaml`
 
 ```yaml
@@ -5893,7 +5076,6 @@ appEnv:
   RETAIL_GATEWAY_ROUTES_CATALOG: "http://catalog"
   RETAIL_GATEWAY_ROUTES_CARTS: "http://carts"
   RETAIL_GATEWAY_ROUTES_ORDERS: "http://orders"
-  RETAIL_GATEWAY_ROUTES_IDENTITY: "http://identity"
   REDIS_HOST: "redis-master"
   REDIS_PORT: "6379"
   ALLOWED_ORIGIN: "https://shop.retailstore.com"
@@ -7098,7 +6280,7 @@ public class SqsConfig {
 ```
 
 ### Task 4: Build Helm charts for remaining services
-cart, checkout, order, identity, experience, gateway — follow catalog-service/chart/ exactly.
+cart, checkout, order, experience, gateway — follow catalog-service/chart/ exactly.
 Only the fullnameOverride and label names change per service.
 
 ### Task 5: Build Terraform

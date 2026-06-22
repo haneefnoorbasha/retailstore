@@ -1,9 +1,8 @@
-# Stage profile — AWS RDS MySQL + AWS SQS + EKS Keycloak.
-# All ${...} variables must be injected via Kubernetes Secrets / AWS Parameter Store.
+# Stage profile — AWS RDS MySQL + AWS MSK Kafka + EKS Keycloak.
+# All ${...} variables injected via Helm values → Kubernetes env vars.
 
 spring:
   datasource:
-    # Replace: RDS MySQL endpoint (e.g. stage-orders.xxxxxx.us-east-1.rds.amazonaws.com)
     url: jdbc:mysql://${RDS_ENDPOINT}:${RDS_PORT:3306}/ordersdb?useSSL=true&requireSSL=true&serverTimezone=UTC
     driver-class-name: com.mysql.cj.jdbc.Driver
     username: ${RDS_USER}
@@ -27,16 +26,24 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          # Replace: Keycloak JWKS URI on EKS
           jwk-set-uri: ${KEYCLOAK_JWKS_URI}
+  kafka:
+    # Replace: MSK bootstrap servers (e.g. b-1.xxx.kafka.us-east-1.amazonaws.com:9094)
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    properties:
+      security.protocol: SSL
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
 
 retail:
   order:
     messaging:
       enabled: true
-      sqs:
-        # Replace: AWS SQS queue URL (e.g. https://sqs.us-east-1.amazonaws.com/123456789012/order-events-stage)
-        queue-url: ${RETAIL_ORDER_MESSAGING_SQS_QUEUE_URL}
+      kafka:
+        topic: order-events-stage
 
 management:
   tracing:
@@ -44,7 +51,6 @@ management:
       probability: 0.1
   zipkin:
     tracing:
-      # Replace: tracing backend endpoint
       endpoint: ${TRACING_ENDPOINT:https://zipkin.internal.retailstore.com/api/v2/spans}
   endpoint:
     health:

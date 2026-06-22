@@ -11,7 +11,7 @@
     <java.version>21</java.version>
     <lombok.version>1.18.34</lombok.version>
     <springdoc.version>2.6.0</springdoc.version>
-    <aws.sdk.version>2.28.0</aws.sdk.version>
+    <kafka.version>3.8.0</kafka.version>
   </properties>
   <dependencies>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
@@ -22,7 +22,7 @@
     <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>runtime</scope></dependency>
     <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-core</artifactId></dependency>
     <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-mysql</artifactId></dependency>
-    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>sqs</artifactId><version>${aws.sdk.version}</version></dependency>
+    <dependency><groupId>org.springframework.kafka</groupId><artifactId>spring-kafka</artifactId></dependency>
     <dependency><groupId>io.micrometer</groupId><artifactId>micrometer-tracing-bridge-brave</artifactId></dependency>
     <dependency><groupId>io.zipkin.reporter2</groupId><artifactId>zipkin-reporter-brave</artifactId></dependency>
     <dependency><groupId>net.logstash.logback</groupId><artifactId>logstash-logback-encoder</artifactId><version>7.4</version></dependency>
@@ -39,6 +39,15 @@
         <configuration><source>${java.version}</source><target>${java.version}</target>
           <annotationProcessorPaths><path><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><version>${lombok.version}</version></path></annotationProcessorPaths>
         </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>0.8.12</version>
+        <executions>
+          <execution><id>prepare-agent</id><goals><goal>prepare-agent</goal></goals></execution>
+          <execution><id>report</id><phase>test</phase><goals><goal>report</goal></goals></execution>
+        </executions>
       </plugin>
     </plugins>
   </build>

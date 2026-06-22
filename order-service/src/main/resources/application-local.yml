@@ -1,6 +1,7 @@
-# Local profile — runs on Docker Desktop k8s (local machine).
-# Helm injects MYSQL_HOST=mysql, RETAIL_ORDER_MESSAGING_SQS_QUEUE_URL, KEYCLOAK_HOST=keycloak
-# IntelliJ: port-forward.sh active; ${VAR:localhost} defaults resolve to forwarded ports.
+# Local profile — Docker Desktop K8s, docker-compose, and IntelliJ.
+# K8s/docker-compose: KAFKA_BOOTSTRAP_SERVERS injected as env var (kafka:9092).
+# IntelliJ against docker-compose: use localhost:9094 (external listener) — set KAFKA_BOOTSTRAP_SERVERS=localhost:9094.
+# IntelliJ against K8s: Kafka not port-forwardable; set RETAIL_ORDER_MESSAGING_ENABLED=false to run without messaging.
 
 spring:
   datasource:
@@ -25,13 +26,20 @@ spring:
       resourceserver:
         jwt:
           jwk-set-uri: http://${KEYCLOAK_HOST:localhost}:${KEYCLOAK_PORT:8180}/realms/retailstore/protocol/openid-connect/certs
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9094}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
 
 retail:
   order:
     messaging:
       enabled: true
-      sqs:
-        queue-url: ${RETAIL_ORDER_MESSAGING_SQS_QUEUE_URL:http://localhost:4566/000000000000/order-events-local}
+      kafka:
+        topic: order-events-local
 
 management:
   tracing:
