@@ -18,8 +18,6 @@ pipeline {
         AWS_REGION   = 'us-east-1'
         ECR_REGISTRY = credentials('ecr-registry')   // Secret text: 123456789012.dkr.ecr.us-east-1.amazonaws.com
         GITHUB_TOKEN = credentials('github-token')   // Secret text: GitHub personal access token (repo scope)
-        IMAGE_TAG    = ''
-        SHOULD_BUILD = 'false'
     }
 
     stages {
