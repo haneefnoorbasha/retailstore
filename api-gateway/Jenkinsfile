@@ -45,12 +45,13 @@ pipeline {
                         return
                     }
 
-                    env.IMAGE_TAG = "sha-${env.GIT_COMMIT.take(7)}"
+                    def gitSha = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG = "sha-${gitSha}"
                     def changed = sh(
                         script: "git diff --name-only HEAD~1 HEAD | grep '^${env.SERVICE_DIR}/' | wc -l",
                         returnStdout: true
-                    ).trim()
-                    if (changed == '0') {
+                    ).trim().toInteger()
+                    if (changed == 0) {
                         env.SHOULD_BUILD = 'false'
                         echo "No changes in ${env.SERVICE_DIR}/ — skipping pipeline"
                     } else {
@@ -71,7 +72,7 @@ pipeline {
         // --platform linux/amd64 ensures the image runs on EKS nodes even
         // when built on an Apple Silicon (ARM) Mac.
         stage('Docker Build & Push') {
-            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            when { expression { return env.SHOULD_BUILD == 'true' } }
             steps {
                 sh """
                     aws ecr get-login-password --region ${env.AWS_REGION} \
@@ -94,7 +95,7 @@ pipeline {
         // commands needed. Local is the cheapest place to catch runtime errors
         // (wrong env vars, missing config, crash loops) before they reach AWS.
         stage('Deploy to DevLocal') {
-            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            when { expression { return env.SHOULD_BUILD == 'true' } }
             steps {
                 script {
                     updateHelmAndPush(env.HELM_LOCAL, 'local')
@@ -109,7 +110,7 @@ pipeline {
         // errors, then clicking Approve. The pipeline pauses here and waits
         // up to 24 hours — if nobody approves, it times out and aborts.
         stage('Stage Approval') {
-            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            when { expression { return env.SHOULD_BUILD == 'true' } }
             steps {
                 timeout(time: 24, unit: 'HOURS') {
                     input message: "Local deployment of ${env.SERVICE_NAME}:${env.IMAGE_TAG} looks good — promote to Stage?",
@@ -126,7 +127,7 @@ pipeline {
         // helm/stage/gateway.yaml and commits; ArgoCD on the stage EKS cluster
         // watches this path and rolls out the new image automatically.
         stage('Deploy to Stage') {
-            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            when { expression { return env.SHOULD_BUILD == 'true' } }
             steps {
                 script {
                     updateHelmAndPush(env.HELM_STAGE, 'stage')
@@ -142,7 +143,7 @@ pipeline {
         // If the deployment is found to be risky, the approver clicks Abort
         // and nothing reaches production.
         stage('Prod Approval') {
-            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            when { expression { return env.SHOULD_BUILD == 'true' } }
             steps {
                 timeout(time: 48, unit: 'HOURS') {
                     input message: "Stage verified — approve ${env.SERVICE_NAME}:${env.IMAGE_TAG} for Production?",
@@ -160,7 +161,7 @@ pipeline {
         // new build, no new artifact, the exact same SHA that passed testing
         // goes to production.
         stage('Deploy to Prod') {
-            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            when { expression { return env.SHOULD_BUILD == 'true' } }
             steps {
                 script {
                     updateHelmAndPush(env.HELM_PROD, 'prod')

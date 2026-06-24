@@ -27,7 +27,8 @@ pipeline {
         stage('Path Check') {
             steps {
                 script {
-                    env.IMAGE_TAG = "sha-${env.GIT_COMMIT.take(7)}"
+                    def gitSha = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG = "sha-${gitSha}"
                     def changed = sh(
                         script: "git diff --name-only HEAD~1 HEAD | grep '^${env.SERVICE_DIR}/' | wc -l",
                         returnStdout: true
@@ -44,7 +45,7 @@ pipeline {
         }
 
         stage('Docker Build & Push') {
-            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            when { expression { return env.SHOULD_BUILD == 'true' } }
             steps {
                 sh """
                     aws ecr get-login-password --region ${env.AWS_REGION} \\
@@ -59,7 +60,7 @@ pipeline {
         }
 
         stage('Update Helm Values') {
-            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            when { expression { return env.SHOULD_BUILD == 'true' } }
             steps {
                 script {
                     sh "sed -i 's|^  tag: .*|  tag: \"${env.IMAGE_TAG}\"|' ${env.HELM_VALUES}"
