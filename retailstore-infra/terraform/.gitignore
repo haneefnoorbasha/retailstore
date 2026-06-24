@@ -1,0 +1,21 @@
+# Terraform local directories — never commit these
+.terraform/
+
+# .terraform.lock.hcl IS committed — it locks provider versions for the team
+
+# Terraform state — stored in S3, not git
+*.tfstate
+*.tfstate.backup
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Saved plan files (contain sensitive output)
+*.tfplan
+
+# Override files (local developer overrides)
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

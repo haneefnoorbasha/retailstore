@@ -1,0 +1,92 @@
+# ECR token refresh for local Docker Desktop K8s.
+# ECR tokens expire every 12 hours. This CronJob keeps the ecr-pull-secret
+# up-to-date so pods can always pull from ECR without ImagePullBackOff errors.
+#
+# Prerequisite: create the aws-credentials-local Secret manually (NOT in git):
+#   kubectl create secret generic aws-credentials-local \
+#     --from-literal=AWS_ACCESS_KEY_ID=<your-key-id> \
+#     --from-literal=AWS_SECRET_ACCESS_KEY=<your-secret> \
+#     -n retailstore
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ecr-refresher
+  namespace: retailstore
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ecr-secret-manager
+  namespace: retailstore
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ecr-refresher-binding
+  namespace: retailstore
+subjects:
+  - kind: ServiceAccount
+    name: ecr-refresher
+    namespace: retailstore
+roleRef:
+  kind: Role
+  name: ecr-secret-manager
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ecr-credentials-refresh
+  namespace: retailstore
+spec:
+  schedule: "0 */6 * * *"    # every 6 hours — ECR tokens last 12h
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: ecr-refresher
+          restartPolicy: OnFailure
+          initContainers:
+            # Step 1: use AWS CLI to get a fresh ECR token and write it to a shared volume
+            - name: get-ecr-token
+              image: amazon/aws-cli:2.17.0
+              envFrom:
+                - secretRef:
+                    name: aws-credentials-local
+              env:
+                - name: AWS_REGION
+                  value: "us-east-1"
+              command:
+                - sh
+                - -c
+                - aws ecr get-login-password --region $AWS_REGION > /shared/token
+              volumeMounts:
+                - name: shared
+                  mountPath: /shared
+          containers:
+            # Step 2: use kubectl to upsert the Docker registry secret with the new token
+            - name: update-secret
+              image: bitnami/kubectl:1.30
+              command:
+                - sh
+                - -c
+                - |
+                  kubectl create secret docker-registry ecr-pull-secret \
+                    --docker-server=067744548987.dkr.ecr.us-east-1.amazonaws.com \
+                    --docker-username=AWS \
+                    --docker-password="$(cat /shared/token)" \
+                    -n retailstore \
+                    --dry-run=client -o yaml | kubectl apply -f -
+                  echo "ECR token refreshed at $(date)"
+              volumeMounts:
+                - name: shared
+                  mountPath: /shared
+          volumes:
+            - name: shared
+              emptyDir: {}

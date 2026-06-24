@@ -1,0 +1,34 @@
+# Core Pipeline
+workflow-aggregator
+pipeline-stage-view
+pipeline-utility-steps
+
+# Source Control
+git
+github
+
+# Docker (build + push in Jenkinsfiles)
+docker-workflow
+
+# AWS
+aws-credentials
+
+# Code Quality
+jacoco
+# NOTE: Veracode plugin is NOT in the public Jenkins update center.
+# In real enterprise setups, download Veracode.hpi from Veracode's portal
+# and install via: Jenkins → Manage Plugins → Advanced → Upload Plugin.
+
+# Test Reporting
+junit
+
+# Credentials & Security
+credentials-binding
+ssh-credentials
+plain-credentials
+
+# Build Utilities
+ansicolor
+timestamper
+build-timeout
+ws-cleanup

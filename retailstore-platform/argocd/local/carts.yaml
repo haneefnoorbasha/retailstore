@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: carts
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.io
+spec:
+  project: retailstore-local
+  sources:
+    # Source 1: reference to the whole repo (used as $repo variable in source 2)
+    - repoURL: https://github.com/haneefnoorbasha/retailstore.git
+      targetRevision: main
+      ref: repo
+    # Source 2: the Helm chart, with values file from a different path in the same repo
+    - repoURL: https://github.com/haneefnoorbasha/retailstore.git
+      targetRevision: main
+      path: cart-service/chart
+      helm:
+        valueFiles:
+          - $repo/retailstore-platform/helm/local/carts.yaml
+  destination:
+    server: https://kubernetes.default.svc   # "this cluster" — Docker Desktop K8s
+    namespace: retailstore
+  syncPolicy:
+    automated:
+      prune: true        # remove k8s objects not in git
+      selfHeal: true     # revert any manual kubectl changes
+    syncOptions:
+      - CreateNamespace=true

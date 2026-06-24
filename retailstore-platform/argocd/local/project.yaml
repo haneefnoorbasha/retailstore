@@ -1,0 +1,15 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: retailstore-local
+  namespace: argocd
+spec:
+  description: RetailStore services — local Docker Desktop K8s
+  sourceRepos:
+    - https://github.com/haneefnoorbasha/retailstore.git
+  destinations:
+    - namespace: retailstore
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
