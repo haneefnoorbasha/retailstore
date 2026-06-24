@@ -28,7 +28,6 @@ public class SecurityConfig {
             .httpBasic(ServerHttpSecurity.HttpBasicSpec::disable)
             .formLogin(ServerHttpSecurity.FormLoginSpec::disable)
             .authorizeExchange(exchanges -> exchanges.anyExchange().permitAll())
-            .oauth2ResourceServer(ServerHttpSecurity.OAuth2ResourceServerSpec::disable)
             .build();
     }
 
