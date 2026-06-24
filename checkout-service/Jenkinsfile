@@ -1,0 +1,98 @@
+pipeline {
+    agent any
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 20, unit: 'MINUTES')
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        // ── Change these 4 lines per service ──────────────────────────────────
+        SERVICE_DIR  = 'checkout-service'
+        SERVICE_NAME = 'checkout'
+        ECR_REPO     = 'retailstore/checkout'
+        HELM_VALUES  = 'retailstore-platform/helm/stage/checkout.yaml'
+        // ──────────────────────────────────────────────────────────────────────
+        AWS_REGION   = 'us-east-1'
+        ECR_REGISTRY = credentials('ecr-registry')   // Secret text: 123456789012.dkr.ecr.us-east-1.amazonaws.com
+        GITHUB_TOKEN = credentials('github-token')   // Secret text: GitHub personal access token (repo scope)
+        IMAGE_TAG    = ''
+        SHOULD_BUILD = 'false'
+    }
+
+    stages {
+
+        stage('Path Check') {
+            steps {
+                script {
+                    env.IMAGE_TAG = "sha-${env.GIT_COMMIT.take(7)}"
+                    def changed = sh(
+                        script: "git diff --name-only HEAD~1 HEAD | grep '^${env.SERVICE_DIR}/' | wc -l",
+                        returnStdout: true
+                    ).trim()
+                    if (changed == '0') {
+                        env.SHOULD_BUILD = 'false'
+                        echo "No changes in ${env.SERVICE_DIR}/ — skipping pipeline"
+                    } else {
+                        env.SHOULD_BUILD = 'true'
+                        echo "Changes detected in ${env.SERVICE_DIR}/ — building ${env.IMAGE_TAG}"
+                    }
+                }
+            }
+        }
+
+        stage('Docker Build & Push') {
+            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            steps {
+                sh """
+                    aws ecr get-login-password --region ${env.AWS_REGION} \\
+                        | docker login --username AWS --password-stdin ${env.ECR_REGISTRY}
+                    docker build \\
+                        --platform linux/amd64 \\
+                        -t ${env.ECR_REGISTRY}/${env.ECR_REPO}:${env.IMAGE_TAG} \\
+                        ${env.SERVICE_DIR}
+                    docker push ${env.ECR_REGISTRY}/${env.ECR_REPO}:${env.IMAGE_TAG}
+                """
+            }
+        }
+
+        stage('Update Helm Values') {
+            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            steps {
+                script {
+                    sh "sed -i 's|^  tag: .*|  tag: \"${env.IMAGE_TAG}\"|' ${env.HELM_VALUES}"
+
+                    def repoPath = sh(
+                        script: "git config --get remote.origin.url | sed 's|.*github\\.com[:/]||' | sed 's|\\.git\$||'",
+                        returnStdout: true
+                    ).trim()
+
+                    sh """
+                        git config user.email "jenkins@retailstore.com"
+                        git config user.name "Jenkins CI"
+                        git remote set-url origin https://${env.GITHUB_TOKEN}@github.com/${repoPath}.git
+                        git add ${env.HELM_VALUES}
+                        git commit -m "ci(${env.SERVICE_NAME}): deploy ${env.IMAGE_TAG} to stage"
+                        git push origin HEAD:main
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Done — ArgoCD will roll out ${env.SERVICE_NAME}:${env.IMAGE_TAG} to EKS stage."
+        }
+        failure {
+            mail to: 'team@retailstore.com',
+                 subject: "FAILED: ${env.SERVICE_NAME} pipeline — build #${BUILD_NUMBER}",
+                 body: "Pipeline failed. Logs: ${BUILD_URL}console"
+        }
+        always {
+            cleanWs()
+        }
+    }
+}

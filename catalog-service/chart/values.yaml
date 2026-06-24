@@ -1,5 +1,7 @@
 replicaCount: 1
 
+imagePullSecrets: []
+
 image:
   repository: ""
   pullPolicy: IfNotPresent

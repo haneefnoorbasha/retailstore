@@ -1,7 +1,9 @@
 image:
-  repository: "host.docker.internal:5000/retailstore/gateway"
+  repository: "067744548987.dkr.ecr.us-east-1.amazonaws.com/retailstore/gateway"
   tag: "local"
   pullPolicy: IfNotPresent
+imagePullSecrets:
+  - name: ecr-pull-secret
 replicaCount: 1
 appEnv:
   SPRING_PROFILES_ACTIVE: "local"

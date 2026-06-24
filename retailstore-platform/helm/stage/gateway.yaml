@@ -1,5 +1,5 @@
 image:
-  repository: ""  # Replace: ECR repo URI (e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/retailstore/api-gateway)
+  repository: "067744548987.dkr.ecr.us-east-1.amazonaws.com/retailstore/gateway"  # Replace: ECR repo URI (e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/retailstore/api-gateway)
   tag: "latest"
 replicaCount: 2
 appEnv:

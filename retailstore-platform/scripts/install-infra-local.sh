@@ -53,7 +53,7 @@ echo "  ✓ Redis ready (redis-master:6379)"
 
 # ── DynamoDB Local ────────────────────────────────────────────────────────────
 echo "▶ Installing DynamoDB Local..."
-kubectl apply -f k8s/dev/dynamodb-local.yaml -n "$NAMESPACE"
+kubectl apply -f k8s/local/dynamodb-local.yaml -n "$NAMESPACE"
 kubectl wait --for=condition=available deployment/dynamodb-local \
   -n "$NAMESPACE" --timeout=2m
 echo "  ✓ DynamoDB Local ready (dynamodb-local:8000)"
@@ -67,7 +67,7 @@ echo "  ✓ Kafka ready (kafka:9092)"
 
 # ── Zipkin ────────────────────────────────────────────────────────────────────
 echo "▶ Installing Zipkin..."
-kubectl apply -f k8s/dev/zipkin.yaml -n "$NAMESPACE"
+kubectl apply -f k8s/local/zipkin.yaml -n "$NAMESPACE"
 kubectl wait --for=condition=available deployment/zipkin \
   -n "$NAMESPACE" --timeout=2m
 echo "  ✓ Zipkin ready (zipkin:9411)"

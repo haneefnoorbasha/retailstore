@@ -1,0 +1,205 @@
+pipeline {
+    agent any
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 40, unit: 'MINUTES')
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        SERVICE_DIR  = 'api-gateway'
+        SERVICE_NAME = 'gateway'
+        ECR_REPO     = 'retailstore/gateway'
+        HELM_LOCAL   = 'retailstore-platform/helm/local/gateway.yaml'
+        HELM_STAGE   = 'retailstore-platform/helm/stage/gateway.yaml'
+        HELM_PROD    = 'retailstore-platform/helm/prod/gateway.yaml'
+        AWS_REGION   = 'us-east-1'
+        ECR_REGISTRY = credentials('ecr-registry')
+        GITHUB_TOKEN = credentials('github-token')
+        IMAGE_TAG    = ''
+        SHOULD_BUILD = 'false'
+    }
+
+    stages {
+
+        // ── STAGE 1: Path Check ───────────────────────────────────────────────
+        // WHY: This is a monorepo — all 6 services share one git repo. Every
+        // push to main triggers ALL 6 pipelines. Without this gate, a change
+        // to catalog-service would also rebuild and redeploy api-gateway
+        // unnecessarily. This stage checks whether api-gateway/ actually
+        // changed in this commit; if not, every downstream stage is skipped.
+        stage('Path Check') {
+            steps {
+                script {
+                    // Abort if this commit was made by Jenkins itself (from a
+                    // previous pipeline's Helm update), preventing infinite loops.
+                    def committer = sh(
+                        script: "git log -1 --pretty=format:'%an'",
+                        returnStdout: true
+                    ).trim()
+                    if (committer == 'Jenkins CI') {
+                        env.SHOULD_BUILD = 'false'
+                        echo "Commit is from Jenkins CI — skipping to avoid loop"
+                        return
+                    }
+
+                    env.IMAGE_TAG = "sha-${env.GIT_COMMIT.take(7)}"
+                    def changed = sh(
+                        script: "git diff --name-only HEAD~1 HEAD | grep '^${env.SERVICE_DIR}/' | wc -l",
+                        returnStdout: true
+                    ).trim()
+                    if (changed == '0') {
+                        env.SHOULD_BUILD = 'false'
+                        echo "No changes in ${env.SERVICE_DIR}/ — skipping pipeline"
+                    } else {
+                        env.SHOULD_BUILD = 'true'
+                        echo "Changes detected in ${env.SERVICE_DIR}/ — building ${env.IMAGE_TAG}"
+                    }
+                }
+            }
+        }
+
+        // ── STAGE 2: Docker Build & Push ──────────────────────────────────────
+        // WHY: Produces the immutable deployable artifact — a Docker image
+        // tagged with the exact git commit SHA (e.g. sha-a1b2c3d). Using the
+        // SHA as the tag means every image is traceable back to the exact
+        // source code that produced it. Pushing to ECR makes this artifact
+        // available to all three environments (local, stage, prod) — they all
+        // pull the same image, eliminating "works on my machine" differences.
+        // --platform linux/amd64 ensures the image runs on EKS nodes even
+        // when built on an Apple Silicon (ARM) Mac.
+        stage('Docker Build & Push') {
+            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            steps {
+                sh """
+                    aws ecr get-login-password --region ${env.AWS_REGION} \
+                        | docker login --username AWS --password-stdin ${env.ECR_REGISTRY}
+                    docker build \
+                        --platform linux/amd64 \
+                        -t ${env.ECR_REGISTRY}/${env.ECR_REPO}:${env.IMAGE_TAG} \
+                        ${env.SERVICE_DIR}
+                    docker push ${env.ECR_REGISTRY}/${env.ECR_REPO}:${env.IMAGE_TAG}
+                """
+            }
+        }
+
+        // ── STAGE 3: Deploy to Local (Automatic) ─────────────────────────────
+        // WHY: Validates the image works in a real Kubernetes environment before
+        // anyone manually approves stage. Jenkins updates the image tag in the
+        // local Helm values file and commits it to git. ArgoCD running on
+        // Docker Desktop K8s watches this file path (helm/local/) and
+        // automatically syncs the new image to the local cluster — no kubectl
+        // commands needed. Local is the cheapest place to catch runtime errors
+        // (wrong env vars, missing config, crash loops) before they reach AWS.
+        stage('Deploy to DevLocal') {
+            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            steps {
+                script {
+                    updateHelmAndPush(env.HELM_LOCAL, 'local')
+                }
+            }
+        }
+
+        // ── STAGE 4: Stage Approval (Manual Gate) ────────────────────────────
+        // WHY: A human confirms the local deployment looked healthy before
+        // promoting to the shared stage environment. In a team, this is the
+        // tech lead or QA engineer verifying the local cluster showed no
+        // errors, then clicking Approve. The pipeline pauses here and waits
+        // up to 24 hours — if nobody approves, it times out and aborts.
+        stage('Stage Approval') {
+            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            steps {
+                timeout(time: 24, unit: 'HOURS') {
+                    input message: "Local deployment of ${env.SERVICE_NAME}:${env.IMAGE_TAG} looks good — promote to Stage?",
+                          ok: 'Deploy to Stage'
+                }
+            }
+        }
+
+        // ── STAGE 5: Deploy to Stage (After Manual Approval) ─────────────────
+        // WHY: Stage is a shared AWS EKS environment that mirrors production
+        // topology — same instance sizes, same security groups, same Keycloak
+        // realm. This is where integration testing happens against real AWS
+        // services (RDS, ElastiCache, MSK, DynamoDB). Jenkins updates
+        // helm/stage/gateway.yaml and commits; ArgoCD on the stage EKS cluster
+        // watches this path and rolls out the new image automatically.
+        stage('Deploy to Stage') {
+            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            steps {
+                script {
+                    updateHelmAndPush(env.HELM_STAGE, 'stage')
+                }
+            }
+        }
+
+        // ── STAGE 6: Prod Approval (Manual Gate) ─────────────────────────────
+        // WHY: Production carries real customer traffic. This gate requires an
+        // explicit decision — typically a product owner or senior engineer —
+        // confirming that stage testing passed and the release is ready. The
+        // 48-hour window gives time for stage soak testing before the approval.
+        // If the deployment is found to be risky, the approver clicks Abort
+        // and nothing reaches production.
+        stage('Prod Approval') {
+            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            steps {
+                timeout(time: 48, unit: 'HOURS') {
+                    input message: "Stage verified — approve ${env.SERVICE_NAME}:${env.IMAGE_TAG} for Production?",
+                          ok: 'Deploy to Production'
+                }
+            }
+        }
+
+        // ── STAGE 7: Deploy to Prod (After Manual Approval) ──────────────────
+        // WHY: Same GitOps pattern as stage — Jenkins updates helm/prod/
+        // gateway.yaml with the approved image tag and commits to git. ArgoCD
+        // on the prod EKS cluster detects the change and performs a rolling
+        // update (zero downtime). Because the image was already pulled and
+        // tested in local and stage, this step is just a tag promotion — no
+        // new build, no new artifact, the exact same SHA that passed testing
+        // goes to production.
+        stage('Deploy to Prod') {
+            when { environment name: 'SHOULD_BUILD', value: 'true' }
+            steps {
+                script {
+                    updateHelmAndPush(env.HELM_PROD, 'prod')
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline complete — ${env.SERVICE_NAME}:${env.IMAGE_TAG} promoted through local → stage → prod."
+        }
+        failure {
+            mail to: 'fromhaneef@gmail.com',
+                 subject: "FAILED: ${env.SERVICE_NAME} pipeline — build #${BUILD_NUMBER}",
+                 body: "Pipeline failed at stage ${env.STAGE_NAME}. Logs: ${BUILD_URL}console"
+        }
+        always {
+            cleanWs()
+        }
+    }
+}
+
+// ── Shared helper: update image tag in a Helm values file and push to git ────
+// Reused by all three deploy stages to avoid copy-paste.
+def updateHelmAndPush(String helmFile, String targetEnv) {
+    sh "sed -i 's|^  tag: .*|  tag: \"${env.IMAGE_TAG}\"|' ${helmFile}"
+
+    def repoPath = sh(
+        script: "git config --get remote.origin.url | sed 's|.*github\\.com[:/]||' | sed 's|\\.git\$||'",
+        returnStdout: true
+    ).trim()
+
+    sh """
+        git config user.email "jenkins@retailstore.com"
+        git config user.name "Jenkins CI"
+        git remote set-url origin https://${env.GITHUB_TOKEN}@github.com/${repoPath}.git
+        git add ${helmFile}
+        git commit -m "ci(${env.SERVICE_NAME}): deploy ${env.IMAGE_TAG} to ${targetEnv}"
+        git push origin HEAD:main
+    """
+}

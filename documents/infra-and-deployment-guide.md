@@ -64,7 +64,7 @@ is no Terraform in the local environment.
 ### Terraform: one set of modules, different tfvars
 
 ```
-retailstore-platform/terraform/
+retailstore-infra/terraform/
   modules/
     vpc/          ← reusable: creates VPC + subnets + NAT Gateway
     eks/          ← reusable: creates EKS cluster + node groups
@@ -108,18 +108,22 @@ Same `deployment.yaml` template for every environment. Only the values file chan
 ```yaml
 # helm/local/gateway.yaml               # helm/stage/gateway.yaml
 image:                                   image:
-  repository: "host.docker.internal:     repository: "123456789.dkr.ecr.
-    5000/retailstore/gateway"              us-east-1.amazonaws.com/gateway"
-  tag: "local"                             tag: "abc123"
+  repository: "067744548987.dkr.ecr.     repository: "067744548987.dkr.ecr.
+    us-east-1.amazonaws.com/             us-east-1.amazonaws.com/
+    retailstore/gateway"                  retailstore/gateway"
+  tag: "local"                             tag: "sha-abc1234"
   pullPolicy: IfNotPresent               replicaCount: 2
-replicaCount: 1                          autoscaling:
-autoscaling:                               enabled: true
-  enabled: false                           minReplicas: 2
-resources:                                 maxReplicas: 4
-  limits:                                resources:
-    memory: 512Mi                          limits:
-                                             memory: 768Mi
+imagePullSecrets:                        autoscaling:
+  - name: ecr-pull-secret                  enabled: true
+replicaCount: 1                            minReplicas: 2
+autoscaling:                               maxReplicas: 4
+  enabled: false                         resources:
+resources:                                 limits:
+  limits:                                    memory: 768Mi
+    memory: 512Mi
 ```
+
+**Why `imagePullSecrets` only in local?** On EKS (stage/prod), the EKS node IAM role has ECR pull permissions built in — no secret needed. On Docker Desktop K8s there is no IAM role, so an explicit `ecr-pull-secret` is required. A CronJob inside the cluster refreshes it every 6 hours because ECR tokens expire after 12 hours.
 
 Helm merges your override file on top of the chart's default `values.yaml`. The chart template
 is never edited — only the values files are.
@@ -139,13 +143,12 @@ Your MacBook
         │     redis pod        ← replaces AWS ElastiCache
         │     keycloak pod     ← same in all envs (not an AWS service)
         │     dynamodb-local   ← replaces AWS DynamoDB
-        │     localstack       ← replaces AWS SQS
         │     zipkin           ← replaces AWS X-Ray
         │
         └── Services (Helm charts — same charts as stage/prod)
               gateway, experience, catalog, carts, checkout, orders
               Spring profile: local
-              Images: localhost:5000/retailstore/<service>:local
+              Images: 067744548987.dkr.ecr.us-east-1.amazonaws.com/retailstore/<service>:sha-*
 ```
 
 **Who creates what:**
@@ -155,15 +158,36 @@ Your MacBook
 | k8s cluster | Docker Desktop (manual, one-time) | — |
 | namespace | `kubectl apply` | `k8s/local/namespace.yaml` |
 | MySQL, Redis, Keycloak | `kubectl apply` | `k8s/local/mysql.yaml`, etc. |
-| DynamoDB, LocalStack, Zipkin | `kubectl apply` | `k8s/dev/dynamodb-local.yaml`, etc. |
-| Microservices | `helm upgrade --install` | `helm/local/*.yaml` |
+| DynamoDB, Zipkin | `kubectl apply` | `k8s/local/dynamodb-local.yaml`, etc. |
+| ECR pull secret | `setup-argocd-local.sh` (one-time) | — |
+| ECR secret refresh | CronJob (every 6h) | `argocd/local/ecr-token-refresh.yaml` |
+| Microservices | ArgoCD (GitOps — auto-syncs on every Jenkins push) | `helm/local/*.yaml` |
 
 **Scripts:**
 ```bash
-./scripts/build-local.sh          # docker build + push to local registry
-./scripts/install-infra-local.sh  # kubectl apply all infra manifests
-./scripts/deploy-local.sh         # helm upgrade all services
-./scripts/port-forward.sh         # expose services to localhost
+./scripts/build-local.sh           # docker build + push to ECR (via Jenkins, or manually)
+./scripts/install-infra-local.sh   # kubectl apply all infra manifests (MySQL, Redis, etc.)
+./scripts/setup-argocd-local.sh    # ONE-TIME: install ArgoCD + ECR secret + Application manifests
+./scripts/refresh-ecr-token.sh     # manual ECR token refresh if pods show ImagePullBackOff
+./scripts/port-forward.sh          # expose services to localhost for IntelliJ/browser
+```
+
+**How local deployment works (GitOps):**
+
+Jenkins builds the Docker image, pushes it to ECR, then commits one line to `helm/local/gateway.yaml`:
+
+```yaml
+image:
+  tag: "sha-a1b2c3d"   ← Jenkins updates this
+```
+
+ArgoCD running on Docker Desktop K8s detects the change (polls every 3 min) and runs `helm upgrade` automatically. No manual `helm` or `kubectl` commands needed after the one-time setup.
+
+**One-time setup:**
+```bash
+cd retailstore-platform
+./scripts/setup-argocd-local.sh
+# Access ArgoCD UI at https://localhost:8443 (after port-forward)
 ```
 
 ---
@@ -199,18 +223,18 @@ internet egress, but that's acceptable for a non-production environment.
 
 | Component | Created by | File |
 |---|---|---|
-| VPC, EKS, RDS, ElastiCache | Terraform | `terraform/environments/stage/` |
-| ECR repos | Terraform | `terraform/modules/ecr/` |
-| Docker images | CI/CD (GitHub Actions) | `.github/workflows/build.yml` |
-| Microservices | Helm (CI/CD or manual) | `helm/stage/*.yaml` |
+| VPC, EKS, RDS, ElastiCache | Terraform | `retailstore-infra/terraform/environments/stage/` |
+| ECR repos | Terraform | `retailstore-infra/terraform/ecr/` |
+| Docker images | Jenkins | `catalog-service/Jenkinsfile`, etc. |
+| Microservices | ArgoCD (GitOps, triggered by Jenkins) | `helm/stage/*.yaml` |
 
 **Deployment flow:**
 ```
 1. terraform apply (one-time per environment, or on infra changes)
        ↓
-2. CI/CD: docker build → docker push → ECR
+2. Jenkins: docker build → docker push → ECR → update helm/stage/*.yaml → git push
        ↓
-3. helm upgrade --install -f helm/stage/gateway.yaml
+3. ArgoCD on EKS stage detects the tag change → helm upgrade automatically
 ```
 
 ---
@@ -265,12 +289,14 @@ k8s manifests:               AWS managed:                 AWS managed (HA):
   redis pod                    ElastiCache (single)         ElastiCache (cluster)
   keycloak pod                 Keycloak on EKS              Keycloak on EKS
   dynamodb-local               DynamoDB                     DynamoDB
-  localstack                   SQS                          SQS
-  zipkin                       X-Ray / Zipkin on EKS        AWS X-Ray
+  zipkin                       SQS                          SQS
+                               X-Ray / Zipkin on EKS        AWS X-Ray
 
+Deployed by: ArgoCD local    Deployed by: ArgoCD stage    Deployed by: ArgoCD prod
 Helm values: helm/local/     Helm values: helm/stage/     Helm values: helm/prod/
 Profile: local               Profile: stage               Profile: prod
-Image: localhost:5000/...    Image: ECR/<sha>             Image: ECR/<sha>
+Image: ECR/retailstore/<svc> Image: ECR/<sha>             Image: ECR/<sha>
+Pull secret: ecr-pull-secret Node IAM role (auto)         Node IAM role (auto)
 Replicas: 1                  Replicas: 2                  Replicas: 3
 Autoscaling: off             Autoscaling: 2–4             Autoscaling: 3–10
 ```

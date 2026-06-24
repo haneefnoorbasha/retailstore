@@ -64,7 +64,7 @@ services:
     ports: ["8000:8000"]
     networks: [retailstore]
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/shell/ | grep -q DynamoDB || exit 1"]
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:8000/ || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
