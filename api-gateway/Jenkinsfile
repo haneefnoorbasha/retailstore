@@ -173,9 +173,7 @@ pipeline {
             echo "Pipeline complete — ${env.SERVICE_NAME}:${env.IMAGE_TAG} promoted through local → stage → prod."
         }
         failure {
-            mail to: 'fromhaneef@gmail.com',
-                 subject: "FAILED: ${env.SERVICE_NAME} pipeline — build #${BUILD_NUMBER}",
-                 body: "Pipeline failed at stage ${env.STAGE_NAME}. Logs: ${BUILD_URL}console"
+            echo "FAILED: ${env.SERVICE_NAME} pipeline — build #${BUILD_NUMBER}. Logs: ${BUILD_URL}console"
         }
         always {
             cleanWs()
