@@ -33,6 +33,10 @@ docker run -d \
     -v "$HOME/.aws":/var/jenkins_home/.aws:ro \
     jenkins-retailstore:latest
 
+# Docker Desktop on Mac owns the socket as root — open it so the jenkins user can run docker commands
+sleep 2
+docker exec -u root jenkins chmod 666 /var/run/docker.sock
+
 echo ""
 echo "Jenkins starting at http://localhost:8090"
 echo ""
