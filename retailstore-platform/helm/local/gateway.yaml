@@ -1,6 +1,6 @@
 image:
   repository: "067744548987.dkr.ecr.us-east-1.amazonaws.com/retailstore/gateway"
-  tag: "local"
+  tag: "sha-8326d11"
   pullPolicy: IfNotPresent
 imagePullSecrets:
   - name: ecr-pull-secret
